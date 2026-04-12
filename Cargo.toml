@@ -1,0 +1,96 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/shared",
+    "crates/auth-service",
+    "crates/user-service",
+    "crates/post-service",
+    "crates/messaging-service",
+    "crates/media-service",
+    "crates/notification-service",
+    "crates/group-page-service",
+    "crates/content-service",
+    "crates/commerce-service",
+    "crates/admin-service",
+    "crates/payment-service",
+    "crates/realtime-service",
+    "crates/api-gateway",
+    "crates/jobs-runner",
+    "crates/ai-service",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[workspace.dependencies]
+# Web framework
+axum = { version = "0.8", features = ["macros", "multipart"] }
+axum-extra = { version = "0.10", features = ["typed-header", "cookie"] }
+tokio = { version = "1", features = ["full"] }
+tower = { version = "0.5", features = ["full"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "limit"] }
+
+# Database
+sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "time", "uuid", "json", "migrate", "rust_decimal"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Auth
+argon2 = "0.5"
+jsonwebtoken = "9"
+sha2 = "0.10"
+bcrypt = "0.17"
+
+# IDs & time
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+time = { version = "0.3", features = ["serde", "serde-human-readable", "formatting", "parsing", "macros"] }
+
+# Async
+async-trait = "0.1"
+
+# Config & env
+dotenvy = "0.15"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Validation
+validator = { version = "0.19", features = ["derive"] }
+
+# Redis
+redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
+
+# HTTP client
+reqwest = { version = "0.12", features = ["json"] }
+
+# Utils
+rand = "0.9"
+thiserror = "2"
+anyhow = "1"
+rust_decimal = { version = "1", features = ["serde-with-str"] }
+once_cell = "1"
+regex = "1"
+sha1 = "0.10"
+md5 = "0.7"
+hmac = "0.12"
+base64 = "0.22"
+ammonia = "4"
+serde_urlencoded = "0.7"
+urlencoding = "2"
+async-nats = "0.38"
+futures = "0.3"
+prometheus = "0.13"
+lettre = { version = "0.11", features = ["tokio1-native-tls", "builder"] }
+image = "0.25"
+aws-sdk-s3 = "1"
+aws-config = { version = "1", features = ["behavior-version-latest"] }
+utoipa = { version = "5", features = ["axum_extras"] }
+utoipa-swagger-ui = { version = "9", features = ["axum"] }
+
+# Shared crate
+shared = { path = "crates/shared" }

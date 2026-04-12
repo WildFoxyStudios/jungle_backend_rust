@@ -1,0 +1,210 @@
+x-common-env: &common-env
+  DATABASE_URL: postgres://wowonder:${DB_PASSWORD:-wowonder_dev_123}@postgres:5432/wowonder
+  REDIS_URL: redis://redis:6379
+  JWT_SECRET: ${JWT_SECRET:-super_secret_jwt_key_change_me}
+  JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-super_secret_refresh_key_change_me}
+  FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
+  ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001}
+  NATS_URL: nats://nats:4222
+  RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
+  SQLX_OFFLINE: "true"
+
+x-service-defaults: &service-defaults
+  build:
+    context: .
+    dockerfile: Dockerfile
+  restart: unless-stopped
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+
+services:
+  # ── Infrastructure ─────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: wowonder
+      POSTGRES_USER: wowonder
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-wowonder_dev_123}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wowonder"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  nats:
+    image: nats:2-alpine
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: ["--js", "--sd", "/data", "--http_port", "8222"]
+    volumes:
+      - natsdata:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD:-minioadmin123}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/data
+
+  # ── API Gateway (public entry point) ───────────────────────────────────────
+  api-gateway:
+    <<: *service-defaults
+    command: ["api-gateway"]
+    ports:
+      - "${GATEWAY_PORT:-8080}:8080"
+    environment:
+      <<: *common-env
+      SERVER_PORT: "8080"
+      AUTH_SERVICE_URL: http://auth-service:3001
+      USER_SERVICE_URL: http://user-service:3002
+      POST_SERVICE_URL: http://post-service:3003
+      MESSAGING_SERVICE_URL: http://messaging-service:3004
+      MEDIA_SERVICE_URL: http://media-service:3005
+      NOTIFICATION_SERVICE_URL: http://notification-service:3006
+      GROUP_PAGE_SERVICE_URL: http://group-page-service:3007
+      CONTENT_SERVICE_URL: http://content-service:3008
+      COMMERCE_SERVICE_URL: http://commerce-service:3009
+      ADMIN_SERVICE_URL: http://admin-service:3010
+      PAYMENT_SERVICE_URL: http://payment-service:3011
+      REALTIME_SERVICE_URL: http://realtime-service:3012
+      AI_SERVICE_URL: http://ai-service:3013
+
+  # ── Microservices ──────────────────────────────────────────────────────────
+  auth-service:
+    <<: *service-defaults
+    command: ["auth-service"]
+    environment:
+      <<: *common-env
+      SERVER_PORT: "3001"
+
+  user-service:
+    <<: *service-defaults
+    command: ["user-service"]
+    environment:
+      <<: *common-env
+      SERVER_PORT: "3002"
+
+  post-service:
+    <<: *service-defaults
+    command: ["post-service"]
+    environment:
+      <<: *common-env
+      SERVER_PORT: "3003"
+
+  messaging-service:
+    <<: *service-defaults
+    command: ["messaging-service"]
+    environment:
+      <<: *common-env
+      SERVER_PORT: "3004"
+
+  media-service:
+    <<: *service-defaults
+    command: ["media-service"]
+    environment:
+      <<: *common-env
+      SERVER_PORT: "3005"
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: ${MINIO_PASSWORD:-minioadmin123}
+
+  notification-service:
+    <<: *service-defaults
+    command: ["notification-service"]
+    environment:
+      <<: *common-env
+      SERVER_PORT: "3006"
+
+  group-page-service:
+    <<: *service-defaults
+    command: ["group-page-service"]
+    environment:
+      <<: *common-env
+      SERVER_PORT: "3007"
+
+  content-service:
+    <<: *service-defaults
+    command: ["content-service"]
+    environment:
+      <<: *common-env
+      SERVER_PORT: "3008"
+
+  commerce-service:
+    <<: *service-defaults
+    command: ["commerce-service"]
+    environment:
+      <<: *common-env
+      SERVER_PORT: "3009"
+
+  admin-service:
+    <<: *service-defaults
+    command: ["admin-service"]
+    environment:
+      <<: *common-env
+      SERVER_PORT: "3010"
+
+  payment-service:
+    <<: *service-defaults
+    command: ["payment-service"]
+    environment:
+      <<: *common-env
+      SERVER_PORT: "3011"
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      PAYPAL_CLIENT_ID: ${PAYPAL_CLIENT_ID:-}
+      PAYPAL_SECRET: ${PAYPAL_SECRET:-}
+      PAYPAL_SANDBOX: ${PAYPAL_SANDBOX:-true}
+
+  realtime-service:
+    <<: *service-defaults
+    command: ["realtime-service"]
+    environment:
+      <<: *common-env
+      SERVER_PORT: "3012"
+
+  ai-service:
+    <<: *service-defaults
+    command: ["ai-service"]
+    environment:
+      <<: *common-env
+      SERVER_PORT: "3013"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+
+  # ── Background Jobs ────────────────────────────────────────────────────────
+  jobs-runner:
+    <<: *service-defaults
+    command: ["jobs-runner"]
+    environment:
+      <<: *common-env
+
+volumes:
+  pgdata:
+  natsdata:
+  miniodata:
