@@ -71,7 +71,7 @@ impl PushSender {
                         team_id: tid,
                         private_key_pem: pem,
                         topic: std::env::var("APNS_TOPIC")
-                            .unwrap_or_else(|_| "com.example.wowonder".into()),
+                            .unwrap_or_else(|_| "com.example.Jungle".into()),
                         production: std::env::var("APNS_PRODUCTION")
                             .unwrap_or_else(|_| "false".into())
                             == "true",

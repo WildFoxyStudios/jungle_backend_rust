@@ -48,7 +48,11 @@ RUN cargo build --release --workspace
 # ─── Stage 2: Runtime ────────────────────────────────────────────────────────
 FROM debian:bookworm-slim AS runtime
 
-RUN apt-get update && apt-get install -y ca-certificates libssl3 curl ffmpeg && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates libssl3 curl tini && \
+    rm -rf /var/lib/apt/lists/*
+
+RUN groupadd --system app && useradd --system --gid app --create-home app
 
 # Copy all binaries
 COPY --from=builder /app/target/release/auth-service /usr/local/bin/
@@ -71,3 +75,9 @@ COPY --from=builder /app/target/release/ai-service /usr/local/bin/
 COPY --from=builder /app/migrations /app/migrations
 
 WORKDIR /app
+USER app
+
+ENTRYPOINT ["tini", "--"]
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD curl -f http://localhost:${PORT:-8080}/health || exit 1

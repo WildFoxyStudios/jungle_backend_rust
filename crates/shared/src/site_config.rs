@@ -152,8 +152,8 @@ impl Default for SiteConfig {
     fn default() -> Self {
         Self {
             general: GeneralConfig {
-                site_name: "WoWonder".into(),
-                site_title: "WoWonder Social Network".into(),
+                site_name: "Jungle".into(),
+                site_title: "Jungle Social Network".into(),
                 site_url: "http://localhost".into(),
                 site_desc: "The Ultimate PHP Social Network Platform".into(),
                 site_email: "admin@example.com".into(),
@@ -231,7 +231,7 @@ impl Default for SiteConfig {
                 smtp_username: String::new(),
                 smtp_encryption: "tls".into(),
                 from_email: "noreply@example.com".into(),
-                from_name: "WoWonder".into(),
+                from_name: "Jungle".into(),
             },
             sms: SmsConfig {
                 provider: "twilio".into(),
@@ -299,7 +299,7 @@ mod tests {
     #[test]
     fn test_site_config_default_general() {
         let cfg = SiteConfig::default();
-        assert_eq!(cfg.general.site_name, "WoWonder");
+        assert_eq!(cfg.general.site_name, "Jungle");
         assert!(!cfg.general.maintenance_mode);
         assert_eq!(cfg.general.timezone, "UTC");
     }
@@ -462,7 +462,7 @@ pub async fn load_config(db: &PgPool) -> Result<SiteConfig, sqlx::Error> {
             smtp_username: get_str(&map, "email", "smtp_username", ""),
             smtp_encryption: get_str(&map, "email", "smtp_encryption", "tls"),
             from_email: get_str(&map, "email", "from_email", "noreply@example.com"),
-            from_name: get_str(&map, "email", "from_name", "WoWonder"),
+            from_name: get_str(&map, "email", "from_name", "Jungle"),
         },
         sms: SmsConfig {
             provider: get_str(&map, "sms", "provider", "twilio"),

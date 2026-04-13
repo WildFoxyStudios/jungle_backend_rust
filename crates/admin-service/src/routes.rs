@@ -277,6 +277,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/admin/settings/{category}", get(handlers::advanced_settings::get_settings_category))
         .route("/v1/admin/settings/{category}", put(handlers::advanced_settings::update_settings_category))
         // ── Health ──
+        .route("/v1/admin/health", get(handlers::health::admin_health))
         .route("/health", get(handlers::health::health_check))
         .with_state(state)
 }

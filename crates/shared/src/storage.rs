@@ -20,7 +20,7 @@ pub struct S3Storage {
 impl S3Storage {
     pub async fn from_env() -> Option<Self> {
         let endpoint = std::env::var("MINIO_ENDPOINT").ok()?;
-        let bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "wowonder".into());
+        let bucket = std::env::var("S3_BUCKET").unwrap_or_else(|_| "Jungle".into());
         let access_key = std::env::var("MINIO_ACCESS_KEY").ok()?;
         let secret_key = std::env::var("MINIO_SECRET_KEY").ok()?;
         let region = std::env::var("S3_REGION").unwrap_or_else(|_| "us-east-1".into());

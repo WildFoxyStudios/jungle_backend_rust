@@ -280,6 +280,42 @@ pub async fn poke_user(
     })))
 }
 
+/// GET /v1/social/pokes — List received pokes with cursor pagination
+pub async fn list_pokes(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(params): Query<shared::pagination::PaginationParams>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let limit = params.limit.unwrap_or(20).min(50) as i64;
+    let cursor = params.cursor.and_then(|c| c.parse::<i64>().ok());
+
+    let rows = sqlx::query_as::<_, (i64, i64, String, String, String, bool, String)>(
+        r#"SELECT p.id, u.id, u.username, u.first_name, u.last_name, u.is_verified, u.avatar
+        FROM pokes p JOIN users u ON p.poker_id = u.id
+        WHERE p.poked_id = $1 AND ($2::bigint IS NULL OR p.id < $2)
+        ORDER BY p.created_at DESC LIMIT $3"#,
+    )
+    .bind(auth.user_id)
+    .bind(cursor)
+    .bind(limit + 1)
+    .fetch_all(&state.db)
+    .await?;
+
+    let has_more = rows.len() as i64 > limit;
+    let items: Vec<_> = rows.into_iter().take(limit as usize).map(|r| {
+        serde_json::json!({
+            "id": r.0,
+            "user": { "id": r.1, "username": r.2, "first_name": r.3, "last_name": r.4, "is_verified": r.5, "avatar": r.6 }
+        })
+    }).collect();
+    let next_cursor = if has_more { items.last().and_then(|i| i["id"].as_i64()).map(|id| id.to_string()) } else { None };
+
+    Ok(Json(serde_json::json!({
+        "data": items,
+        "meta": { "has_more": has_more, "cursor": next_cursor }
+    })))
+}
+
 // ==================== MUTE ====================
 
 pub async fn mute_user(

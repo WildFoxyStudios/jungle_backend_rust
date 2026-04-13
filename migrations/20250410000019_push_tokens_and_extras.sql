@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS ad_clicks (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_ad_clicks_ad ON ad_clicks(ad_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ad_clicks_user ON ad_clicks(user_id);
 
 -- Gifts/Stickers
 CREATE TABLE IF NOT EXISTS gift_categories (
@@ -92,7 +93,7 @@ CREATE TABLE IF NOT EXISTS user_sticker_packs (
 );
 
 -- Activity log index
-CREATE INDEX IF NOT EXISTS idx_activities_action ON activities(action, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_activities_action ON activities(activity_type, created_at DESC);
 
 -- User experience table (for LinkedIn mode)
 CREATE TABLE IF NOT EXISTS user_experience (

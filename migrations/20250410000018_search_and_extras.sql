@@ -110,15 +110,9 @@ CREATE TABLE IF NOT EXISTS user_projects (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
--- Recent searches
-CREATE TABLE IF NOT EXISTS recent_searches (
-    id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    query VARCHAR(500) NOT NULL,
-    search_type VARCHAR(50) DEFAULT 'all',
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
-CREATE INDEX IF NOT EXISTS idx_recent_searches_user ON recent_searches(user_id, created_at DESC);
+-- Recent searches (may already exist from earlier migration with searched_at column)
+ALTER TABLE recent_searches ADD COLUMN IF NOT EXISTS query VARCHAR(500) NOT NULL DEFAULT '';
+ALTER TABLE recent_searches ADD COLUMN IF NOT EXISTS search_type VARCHAR(50) DEFAULT 'all';
 
 -- Colored post templates
 CREATE TABLE IF NOT EXISTS colored_post_templates (

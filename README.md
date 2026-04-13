@@ -1,6 +1,6 @@
-# WoWonder Backend — Rust Microservices
+# Jungle Backend — Rust Microservices
 
-Rewrite of the WoWonder PHP social network backend into Rust microservices.
+Rewrite of the Jungle PHP social network backend into Rust microservices.
 
 ## Architecture
 
@@ -174,8 +174,8 @@ wscat -c 'ws://localhost:8080/ws?token=<jwt>'
 ```bash
 pip install mysql-connector-python psycopg2-binary
 python tools/migrate_mysql_to_pg.py \
-  --mysql-host 127.0.0.1 --mysql-db wowonder_db \
-  --pg-host 127.0.0.1 --pg-db wowonder
+  --mysql-host 127.0.0.1 --mysql-db Jungle_db \
+  --pg-host 127.0.0.1 --pg-db Jungle
 ```
 
 Migrates 60+ tables with type conversions, table consolidations, sequence resets, and verification.

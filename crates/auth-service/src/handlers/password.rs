@@ -57,7 +57,7 @@ pub async fn forgot_password(
         let frontend_url = std::env::var("FRONTEND_URL")
             .unwrap_or_else(|_| "http://localhost:3000".into());
         let reset_link = format!("{}/reset-password?token={}", frontend_url, token);
-        let site_name = std::env::var("SITE_NAME").unwrap_or_else(|_| "WoWonder".into());
+        let site_name = std::env::var("SITE_NAME").unwrap_or_else(|_| "Jungle".into());
         let (subject, html_body) =
             shared::email_templates::password_reset_email(&reset_link, &site_name);
 

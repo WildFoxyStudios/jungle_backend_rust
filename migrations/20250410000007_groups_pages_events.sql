@@ -124,7 +124,7 @@ CREATE TABLE events (
 );
 
 CREATE INDEX idx_events_creator ON events(creator_id);
-CREATE INDEX idx_events_upcoming ON events(start_at) WHERE start_at > NOW();
+CREATE INDEX idx_events_upcoming ON events(start_at);
 
 -- Event responses (unifies Wo_Egoing + Wo_Einterested + Wo_Einvited)
 CREATE TABLE event_responses (

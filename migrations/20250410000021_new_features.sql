@@ -22,28 +22,13 @@ CREATE TABLE IF NOT EXISTS poll_votes (
 );
 CREATE INDEX IF NOT EXISTS idx_poll_votes_poll ON poll_votes(poll_id);
 
--- ── Family Relations ─────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS family_relations (
-    id            BIGSERIAL PRIMARY KEY,
-    user_id       BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    relative_id   BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    relation_type VARCHAR(50) NOT NULL DEFAULT '',
-    status        VARCHAR(20) NOT NULL DEFAULT 'pending',
-    created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    UNIQUE(user_id, relative_id)
-);
+-- ── Family Relations (already created in migration 002 with member_id column)
 CREATE INDEX IF NOT EXISTS idx_family_user ON family_relations(user_id);
-CREATE INDEX IF NOT EXISTS idx_family_relative ON family_relations(relative_id);
+CREATE INDEX IF NOT EXISTS idx_family_relative ON family_relations(member_id);
 
--- ── User Skills ──────────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS user_skills (
-    id         BIGSERIAL PRIMARY KEY,
-    user_id    BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-    name       VARCHAR(100) NOT NULL,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
+-- ── User Skills (already created in migration 002 with 'skill' column)
 CREATE INDEX IF NOT EXISTS idx_user_skills_user ON user_skills(user_id);
-CREATE INDEX IF NOT EXISTS idx_user_skills_name ON user_skills(name);
+CREATE INDEX IF NOT EXISTS idx_user_skills_skill ON user_skills(skill);
 
 -- ── Live Streams ─────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS live_streams (

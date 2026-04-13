@@ -33,6 +33,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/social/block/{user_id}", post(handlers::social::block_user))
         .route("/v1/social/block/{user_id}", delete(handlers::social::unblock_user))
         // Poke
+        .route("/v1/social/pokes", get(handlers::social::list_pokes))
         .route("/v1/social/poke/{user_id}", post(handlers::social::poke_user))
         // Mute
         .route("/v1/social/mute/{user_id}", post(handlers::social::mute_user))
@@ -122,6 +123,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/users/me/notification-settings", get(handlers::settings::get_notification_settings))
         .route("/v1/users/me/notification-settings", put(handlers::settings::update_notification_settings))
         .route("/v1/users/me/invite-code", get(handlers::settings::get_my_invite_code))
+        // Verification
+        .route("/v1/users/me/verification-request", post(handlers::extras::request_verification))
         // Health
         .route("/health", get(handlers::health::health_check))
         .with_state(state)

@@ -22,7 +22,7 @@ impl PaymentGateway for BankTransferGateway {
     }
 
     async fn create_session(&self, params: PaymentParams) -> Result<PaymentSession, PaymentError> {
-        let bank_name = std::env::var("BANK_TRANSFER_BANK_NAME").unwrap_or_else(|_| "WoWonder Bank".into());
+        let bank_name = std::env::var("BANK_TRANSFER_BANK_NAME").unwrap_or_else(|_| "Jungle Bank".into());
         let account_number = std::env::var("BANK_TRANSFER_ACCOUNT").unwrap_or_else(|_| "XXXX-XXXX-XXXX".into());
         let routing = std::env::var("BANK_TRANSFER_ROUTING").unwrap_or_default();
 

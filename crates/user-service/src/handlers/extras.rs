@@ -1388,3 +1388,32 @@ pub async fn contact_us(
 
     Ok(Json(json!({ "data": { "sent": true } })))
 }
+
+/// POST /v1/users/me/verification-request — Submit identity verification docs (PHP: verificate-user.php)
+pub async fn request_verification(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<serde_json::Value>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let message = req["message"].as_str().unwrap_or("").trim().to_string();
+    let document_url = req["document_url"].as_str().unwrap_or("").trim().to_string();
+    let full_name = req["full_name"].as_str().unwrap_or("").trim().to_string();
+
+    if document_url.is_empty() {
+        return Err(ApiError::BadRequest("Document photo is required".into()));
+    }
+
+    sqlx::query(
+        r#"INSERT INTO verification_requests (user_id, full_name, message, document_url, status, created_at)
+        VALUES ($1, $2, $3, $4, 'pending', NOW())
+        ON CONFLICT (user_id) DO UPDATE SET full_name = $2, message = $3, document_url = $4, status = 'pending'"#,
+    )
+    .bind(auth.user_id)
+    .bind(&full_name)
+    .bind(&message)
+    .bind(&document_url)
+    .execute(&state.db)
+    .await?;
+
+    Ok(Json(json!({ "data": { "submitted": true, "status": "pending" } })))
+}

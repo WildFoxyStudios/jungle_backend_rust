@@ -128,6 +128,20 @@ CREATE TABLE IF NOT EXISTS monetization_subscriptions (
 CREATE INDEX IF NOT EXISTS idx_monetization_subs_subscriber ON monetization_subscriptions(subscriber_id);
 CREATE INDEX IF NOT EXISTS idx_monetization_subs_creator ON monetization_subscriptions(creator_id);
 
+-- ── Live Streams (needed before live_viewers FK) ──────────────────────────
+CREATE TABLE IF NOT EXISTS live_streams (
+    id           BIGSERIAL PRIMARY KEY,
+    user_id      BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    title        VARCHAR(255) NOT NULL DEFAULT '',
+    stream_key   VARCHAR(100) NOT NULL DEFAULT '',
+    status       VARCHAR(20) NOT NULL DEFAULT 'live',
+    viewer_count INT NOT NULL DEFAULT 0,
+    created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    ended_at     TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS idx_live_streams_status ON live_streams(status);
+CREATE INDEX IF NOT EXISTS idx_live_streams_user ON live_streams(user_id);
+
 -- ── Live Stream Viewers (Wo_Live_Sub_Users) ────────────────────────────────
 CREATE TABLE IF NOT EXISTS live_viewers (
     id          BIGSERIAL PRIMARY KEY,
@@ -314,6 +328,18 @@ CREATE TABLE IF NOT EXISTS theme_settings (
     value   TEXT NOT NULL DEFAULT ''
 );
 
+-- ── Pro Plans (create if not exists, needed before ALTER) ──────────────────
+CREATE TABLE IF NOT EXISTS pro_plans (
+    id BIGSERIAL PRIMARY KEY,
+    plan_type VARCHAR(50) NOT NULL UNIQUE,
+    title VARCHAR(200) NOT NULL,
+    price NUMERIC(10,2) NOT NULL DEFAULT 0,
+    period_days INT NOT NULL DEFAULT 30,
+    features JSONB DEFAULT '[]'::jsonb,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
 -- ── Pro Plans / Manage Pro (Wo_Manage_Pro) ─────────────────────────────────
 -- Extend existing pro_plans if needed
 ALTER TABLE pro_plans ADD COLUMN IF NOT EXISTS featured_member INT NOT NULL DEFAULT 0;
@@ -331,8 +357,6 @@ ALTER TABLE posts ADD COLUMN IF NOT EXISTS album_name VARCHAR(255);
 CREATE INDEX IF NOT EXISTS idx_game_players_game ON game_players(game_id);
 CREATE INDEX IF NOT EXISTS idx_game_players_user ON game_players(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_ads_user ON user_ads(user_id);
-CREATE INDEX IF NOT EXISTS idx_ad_clicks_ad ON ad_clicks(ad_id);
-CREATE INDEX IF NOT EXISTS idx_ad_clicks_user ON ad_clicks(user_id);
 CREATE INDEX IF NOT EXISTS idx_products_user ON products(user_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_user ON jobs(user_id);
 CREATE INDEX IF NOT EXISTS idx_fundings_user ON fundings(user_id);

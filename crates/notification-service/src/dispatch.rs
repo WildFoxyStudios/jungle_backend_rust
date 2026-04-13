@@ -30,7 +30,7 @@ impl NotificationDispatcher {
             db,
             http: reqwest::Client::new(),
             realtime_url,
-            site_name: std::env::var("SITE_NAME").unwrap_or_else(|_| "WoWonder".into()),
+            site_name: std::env::var("SITE_NAME").unwrap_or_else(|_| "Jungle".into()),
             site_url: std::env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:3000".into()),
         }
     }

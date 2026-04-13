@@ -3,10 +3,10 @@ use utoipa::OpenApi;
 #[derive(OpenApi)]
 #[openapi(
     info(
-        title = "WoWonder Backend API",
+        title = "Jungle Backend API",
         version = "2.0.0",
-        description = "WoWonder Social Network — Rust Backend API. 519 endpoints across 16 microservices.",
-        contact(name = "WoWonder", url = "https://wowonder.com"),
+        description = "Jungle Social Network — Rust Backend API. 519 endpoints across 16 microservices.",
+        contact(name = "Jungle", url = "https://Jungle.com"),
         license(name = "Proprietary")
     ),
     servers(

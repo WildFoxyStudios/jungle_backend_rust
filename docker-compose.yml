@@ -1,5 +1,5 @@
 x-common-env: &common-env
-  DATABASE_URL: postgres://wowonder:${DB_PASSWORD:-wowonder_dev_123}@postgres:5432/wowonder
+  DATABASE_URL: postgres://Jungle:${DB_PASSWORD:-Jungle_dev_123}@postgres:5432/Jungle
   REDIS_URL: redis://redis:6379
   JWT_SECRET: ${JWT_SECRET:-super_secret_jwt_key_change_me}
   JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-super_secret_refresh_key_change_me}
@@ -25,15 +25,15 @@ services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_DB: wowonder
-      POSTGRES_USER: wowonder
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-wowonder_dev_123}
+      POSTGRES_DB: Jungle
+      POSTGRES_USER: Jungle
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-Jungle_dev_123}
     volumes:
       - pgdata:/var/lib/postgresql/data
     ports:
       - "5432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U wowonder"]
+      test: ["CMD-SHELL", "pg_isready -U Jungle"]
       interval: 5s
       timeout: 5s
       retries: 5

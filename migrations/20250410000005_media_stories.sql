@@ -28,7 +28,7 @@ CREATE TABLE stories (
 );
 
 CREATE INDEX idx_stories_user ON stories(user_id, created_at DESC);
-CREATE INDEX idx_stories_active ON stories(expires_at) WHERE expires_at > NOW();
+CREATE INDEX idx_stories_active ON stories(expires_at);
 
 CREATE TABLE story_media (
     id              BIGSERIAL PRIMARY KEY,

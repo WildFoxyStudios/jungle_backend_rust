@@ -93,24 +93,26 @@ async fn handle_socket(socket: WebSocket, user_id: i64, hub: ConnectionHub) {
 
 async fn process_client_message(user_id: i64, hub: &ConnectionHub, msg: WsMessage) {
     match msg.event.as_str() {
-        "typing" => {
+        "typing" | "typing.start" => {
             if let Some(to_id) = msg.data["to_user_id"].as_i64() {
+                let conversation_id = msg.data["conversation_id"].as_i64().unwrap_or(0);
                 hub.send_to_user(
                     to_id,
                     WsMessage {
-                        event: "typing".into(),
-                        data: serde_json::json!({ "user_id": user_id }),
+                        event: "typing.start".into(),
+                        data: serde_json::json!({ "user_id": user_id, "conversation_id": conversation_id }),
                     },
                 );
             }
         }
-        "stop_typing" => {
+        "stop_typing" | "typing.stop" => {
             if let Some(to_id) = msg.data["to_user_id"].as_i64() {
+                let conversation_id = msg.data["conversation_id"].as_i64().unwrap_or(0);
                 hub.send_to_user(
                     to_id,
                     WsMessage {
-                        event: "stop_typing".into(),
-                        data: serde_json::json!({ "user_id": user_id }),
+                        event: "typing.stop".into(),
+                        data: serde_json::json!({ "user_id": user_id, "conversation_id": conversation_id }),
                     },
                 );
             }
@@ -124,13 +126,12 @@ async fn process_client_message(user_id: i64, hub: &ConnectionHub, msg: WsMessag
                 },
             );
         }
-        "message" => {
-            // Relay a chat message to target user
+        "message" | "message.new" => {
             if let Some(to_id) = msg.data["to_user_id"].as_i64() {
                 hub.send_to_user(
                     to_id,
                     WsMessage {
-                        event: "new_message".into(),
+                        event: "message.new".into(),
                         data: serde_json::json!({
                             "from_user_id": user_id,
                             "message": msg.data.get("message")

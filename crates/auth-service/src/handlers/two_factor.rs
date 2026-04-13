@@ -19,7 +19,7 @@ pub async fn setup_2fa(
 ) -> Result<Json<Value>, ApiError> {
     // Generate TOTP secret
     let secret = generate_totp_secret();
-    let issuer = "WoWonder";
+    let issuer = "Jungle";
 
     // Store pending secret (not yet enabled)
     sqlx::query("UPDATE users SET two_factor_secret = $1 WHERE id = $2")

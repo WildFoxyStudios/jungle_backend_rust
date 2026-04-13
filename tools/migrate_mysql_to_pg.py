@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-MySQL → PostgreSQL Data Migration Script for WoWonder
+MySQL → PostgreSQL Data Migration Script for Jungle
 =====================================================
-Reads from the original WoWonder MySQL database and inserts into
+Reads from the original Jungle MySQL database and inserts into
 the new PostgreSQL schema. Handles type conversions, table consolidations,
 and FK ordering.
 
@@ -11,9 +11,9 @@ Requirements:
 
 Usage:
   python migrate_mysql_to_pg.py \
-    --mysql-host 127.0.0.1 --mysql-port 3306 --mysql-db wowonder_db \
+    --mysql-host 127.0.0.1 --mysql-port 3306 --mysql-db Jungle_db \
     --mysql-user root --mysql-pass "" \
-    --pg-host 127.0.0.1 --pg-port 5432 --pg-db wowonder \
+    --pg-host 127.0.0.1 --pg-port 5432 --pg-db Jungle \
     --pg-user postgres --pg-pass postgres \
     --batch-size 1000
 """
@@ -1291,7 +1291,7 @@ class Migrator:
 
 
 def main():
-    parser = argparse.ArgumentParser(description='WoWonder MySQL → PostgreSQL Migrator')
+    parser = argparse.ArgumentParser(description='Jungle MySQL → PostgreSQL Migrator')
     parser.add_argument('--mysql-host', default='127.0.0.1')
     parser.add_argument('--mysql-port', type=int, default=3306)
     parser.add_argument('--mysql-db', required=True)
@@ -1299,7 +1299,7 @@ def main():
     parser.add_argument('--mysql-pass', default='')
     parser.add_argument('--pg-host', default='127.0.0.1')
     parser.add_argument('--pg-port', type=int, default=5432)
-    parser.add_argument('--pg-db', default='wowonder')
+    parser.add_argument('--pg-db', default='Jungle')
     parser.add_argument('--pg-user', default='postgres')
     parser.add_argument('--pg-pass', default='postgres')
     parser.add_argument('--batch-size', type=int, default=1000)

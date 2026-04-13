@@ -231,6 +231,55 @@ pub async fn unsave_post(
     Ok(Json(serde_json::json!({ "data": { "message": "Post unsaved" } })))
 }
 
+pub async fn get_saved_posts(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    axum::extract::Query(params): axum::extract::Query<shared::pagination::PaginationParams>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let limit = params.limit.unwrap_or(20).min(50) as i64;
+    let cursor = params.cursor.and_then(|c| c.parse::<i64>().ok());
+
+    let rows = sqlx::query_as::<_, (i64, String, String, String, String, i32, i32, i32, i64, String, String, String, bool, String, String)>(
+        r#"SELECT p.id, p.uuid, p.content, p.post_type, p.privacy,
+            p.like_count, p.comment_count, p.share_count,
+            u.id as user_id, u.username, u.first_name, u.last_name, u.is_verified,
+            u.avatar, p.created_at::text
+        FROM saved_posts sp
+        JOIN posts p ON sp.post_id = p.id
+        JOIN users u ON p.user_id = u.id
+        WHERE sp.user_id = $1 AND p.deleted_at IS NULL
+        AND ($2::bigint IS NULL OR sp.post_id < $2)
+        ORDER BY sp.created_at DESC
+        LIMIT $3"#,
+    )
+    .bind(auth.user_id)
+    .bind(cursor)
+    .bind(limit + 1)
+    .fetch_all(&state.db)
+    .await?;
+
+    let has_more = rows.len() as i64 > limit;
+    let items: Vec<_> = rows.into_iter().take(limit as usize).map(|r| {
+        serde_json::json!({
+            "id": r.0, "uuid": r.1, "content": r.2, "post_type": r.3,
+            "privacy": r.4, "like_count": r.5, "comment_count": r.6,
+            "share_count": r.7, "is_saved": true,
+            "publisher": {
+                "id": r.8, "username": r.9, "first_name": r.10,
+                "last_name": r.11, "is_verified": r.12, "avatar": r.13
+            },
+            "created_at": r.14
+        })
+    }).collect();
+
+    let next_cursor = if has_more { items.last().and_then(|i| i["id"].as_i64()).map(|id| id.to_string()) } else { None };
+
+    Ok(Json(serde_json::json!({
+        "data": items,
+        "meta": { "has_more": has_more, "cursor": next_cursor }
+    })))
+}
+
 pub async fn hide_post(
     State(state): State<AppState>,
     auth: AuthUser,

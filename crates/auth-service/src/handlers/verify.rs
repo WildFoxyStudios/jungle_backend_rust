@@ -93,7 +93,7 @@ pub async fn resend_verification(
         .rows_affected();
 
         if updated > 0 {
-            let site_name = std::env::var("SITE_NAME").unwrap_or_else(|_| "WoWonder".into());
+            let site_name = std::env::var("SITE_NAME").unwrap_or_else(|_| "Jungle".into());
             let (subject, html_body) =
                 shared::email_templates::verification_email(&code, &site_name);
             if let Err(e) = shared::email::send_email(email, &subject, &html_body).await {
@@ -114,7 +114,7 @@ pub async fn resend_verification(
             .query_async(&mut redis)
             .await;
 
-        let site_name = std::env::var("SITE_NAME").unwrap_or_else(|_| "WoWonder".into());
+        let site_name = std::env::var("SITE_NAME").unwrap_or_else(|_| "Jungle".into());
         let sms_body = format!("{} - Your verification code is: {}", site_name, code);
         if let Err(e) = shared::sms::send_sms(phone, &sms_body).await {
             tracing::error!(phone = %phone, error = %e, "Failed to send SMS verification");

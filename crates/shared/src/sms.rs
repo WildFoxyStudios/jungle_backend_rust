@@ -47,7 +47,7 @@ impl SmsSender {
                 let key = std::env::var("INFOBIP_API_KEY").ok()?;
                 let url = std::env::var("INFOBIP_BASE_URL")
                     .unwrap_or_else(|_| "https://api.infobip.com".into());
-                let from = std::env::var("INFOBIP_SENDER").unwrap_or_else(|_| "WoWonder".into());
+                let from = std::env::var("INFOBIP_SENDER").unwrap_or_else(|_| "Jungle".into());
                 SmsProvider::Infobip {
                     api_key: key,
                     base_url: url,

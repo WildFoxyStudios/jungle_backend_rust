@@ -25,6 +25,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/comments/{id}/replies", get(handlers::comments::get_replies))
         .route("/v1/comments/{id}/react", post(handlers::reactions::react_to_comment))
         // Save/Hide
+        .route("/v1/posts/saved", get(handlers::posts::get_saved_posts))
         .route("/v1/posts/{id}/save", post(handlers::posts::save_post))
         .route("/v1/posts/{id}/save", delete(handlers::posts::unsave_post))
         .route("/v1/posts/{id}/hide", post(handlers::posts::hide_post))

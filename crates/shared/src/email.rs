@@ -42,7 +42,7 @@ impl SmtpConfig {
             from_email: std::env::var("SMTP_FROM_EMAIL")
                 .unwrap_or_else(|_| "noreply@example.com".into()),
             from_name: std::env::var("SMTP_FROM_NAME")
-                .unwrap_or_else(|_| "WoWonder".into()),
+                .unwrap_or_else(|_| "Jungle".into()),
         })
     }
 }

@@ -8,7 +8,7 @@ static REGISTRY: Lazy<Registry> = Lazy::new(Registry::new);
 
 pub static HTTP_REQUESTS: Lazy<IntCounterVec> = Lazy::new(|| {
     let opts = Opts::new("http_requests_total", "Total HTTP requests")
-        .namespace("wowonder");
+        .namespace("Jungle");
     let counter = IntCounterVec::new(opts, &["method", "path", "status"]).unwrap();
     REGISTRY.register(Box::new(counter.clone())).ok();
     counter
@@ -19,7 +19,7 @@ pub static HTTP_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
         "http_request_duration_seconds",
         "HTTP request duration in seconds",
     )
-    .namespace("wowonder")
+    .namespace("Jungle")
     .buckets(vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 5.0]);
     let hist = HistogramVec::new(opts, &["method", "path"]).unwrap();
     REGISTRY.register(Box::new(hist.clone())).ok();
@@ -28,14 +28,14 @@ pub static HTTP_DURATION: Lazy<HistogramVec> = Lazy::new(|| {
 
 pub static DB_QUERIES: Lazy<IntCounterVec> = Lazy::new(|| {
     let opts = Opts::new("db_queries_total", "Total database queries")
-        .namespace("wowonder");
+        .namespace("Jungle");
     let counter = IntCounterVec::new(opts, &["query_type"]).unwrap();
     REGISTRY.register(Box::new(counter.clone())).ok();
     counter
 });
 
 pub static ACTIVE_WEBSOCKETS: Lazy<IntGauge> = Lazy::new(|| {
-    let gauge = IntGauge::new("wowonder_active_websocket_connections", "Active WebSocket connections").unwrap();
+    let gauge = IntGauge::new("Jungle_active_websocket_connections", "Active WebSocket connections").unwrap();
     REGISTRY.register(Box::new(gauge.clone())).ok();
     gauge
 });

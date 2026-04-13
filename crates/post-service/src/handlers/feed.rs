@@ -75,7 +75,10 @@ pub async fn get_feed(
                      OR p.page_id IN (SELECT page_id FROM page_likes WHERE user_id = $1)
                      OR p.group_id IN (SELECT group_id FROM group_members WHERE user_id = $1 AND status = 'active')
                  )
-               ORDER BY p.is_pinned DESC, p.is_boosted DESC, p.id DESC
+               ORDER BY p.is_pinned DESC, p.is_boosted DESC,
+                        (p.like_count + p.comment_count * 3 + p.share_count * 5)::float
+                        / GREATEST(EXTRACT(EPOCH FROM (NOW() - p.created_at)) / 3600, 1) DESC,
+                        p.id DESC
                LIMIT $3"#,
         )
         .bind(auth.user_id)

@@ -25,7 +25,7 @@ CREATE INDEX IF NOT EXISTS idx_reports_status ON reports(status) WHERE status = 
 -- 4. Conversations: page_id support for page messaging
 -- (page_chat.php functionality - pages can have message inboxes)
 -- ============================================================
-ALTER TABLE conversations ADD COLUMN IF NOT EXISTS page_id BIGINT REFERENCES pages(page_id) ON DELETE CASCADE;
+ALTER TABLE conversations ADD COLUMN IF NOT EXISTS page_id BIGINT REFERENCES pages(id) ON DELETE CASCADE;
 CREATE INDEX IF NOT EXISTS idx_conversations_page ON conversations(page_id) WHERE page_id IS NOT NULL;
 
 -- ============================================================
@@ -42,7 +42,10 @@ CREATE INDEX IF NOT EXISTS idx_activities_user ON activities(user_id, created_at
 -- ============================================================
 -- 7. Hashtags: ensure use_count stays non-negative
 -- ============================================================
-ALTER TABLE hashtags ADD CONSTRAINT IF NOT EXISTS hashtags_use_count_nonneg CHECK (use_count >= 0);
+DO $$ BEGIN
+    ALTER TABLE hashtags ADD CONSTRAINT hashtags_use_count_nonneg CHECK (use_count >= 0);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
 
 -- ============================================================
 -- 8. Page chat: add page_id to conversations
