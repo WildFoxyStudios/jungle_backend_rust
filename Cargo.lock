@@ -14,6 +14,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "axum-extra",
+ "http 1.4.0",
  "redis",
  "rust_decimal",
  "serde",
@@ -54,6 +55,7 @@ name = "ai-service"
 version = "0.1.0"
 dependencies = [
  "axum",
+ "http 1.4.0",
  "redis",
  "reqwest",
  "serde",
@@ -114,6 +116,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "dashmap",
+ "http 1.4.0",
  "redis",
  "reqwest",
  "serde",
@@ -256,6 +259,7 @@ dependencies = [
  "base64",
  "bcrypt",
  "hmac",
+ "http 1.4.0",
  "jsonwebtoken",
  "md5",
  "rand 0.9.3",
@@ -1166,6 +1170,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "axum-extra",
+ "http 1.4.0",
  "redis",
  "rust_decimal",
  "serde",
@@ -1202,6 +1207,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "axum-extra",
+ "http 1.4.0",
  "redis",
  "serde",
  "serde_json",
@@ -2048,6 +2054,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "axum-extra",
+ "http 1.4.0",
  "redis",
  "rust_decimal",
  "serde",
@@ -2930,6 +2937,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "axum-extra",
+ "http 1.4.0",
  "image",
  "redis",
  "serde",
@@ -2957,6 +2965,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "axum-extra",
+ "http 1.4.0",
  "redis",
  "serde",
  "serde_json",
@@ -3094,6 +3103,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "axum-extra",
+ "http 1.4.0",
  "redis",
  "reqwest",
  "serde",
@@ -3346,6 +3356,7 @@ dependencies = [
  "base64",
  "hex",
  "hmac",
+ "http 1.4.0",
  "md5",
  "redis",
  "reqwest",
@@ -3544,6 +3555,7 @@ version = "0.1.0"
 dependencies = [
  "axum",
  "axum-extra",
+ "http 1.4.0",
  "redis",
  "rust_decimal",
  "serde",
@@ -3890,6 +3902,7 @@ dependencies = [
  "axum-extra",
  "dashmap",
  "futures-util",
+ "http 1.4.0",
  "jsonwebtoken",
  "redis",
  "serde",
@@ -5559,6 +5572,7 @@ dependencies = [
  "argon2",
  "axum",
  "axum-extra",
+ "http 1.4.0",
  "redis",
  "serde",
  "serde_json",

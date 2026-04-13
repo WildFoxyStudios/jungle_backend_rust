@@ -3,6 +3,7 @@ mod routes;
 
 use shared::{auth::AppState, config::AppConfig, db, events::{NatsEventBus, NoopEventBus, EventBus}};
 use std::sync::Arc;
+use http::header;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -26,7 +27,13 @@ async fn main() {
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
         .allow_methods(AllowMethods::any())
-        .allow_headers(AllowHeaders::any())
+        .allow_headers(AllowHeaders::list([
+            header::CONTENT_TYPE,
+            header::AUTHORIZATION,
+            header::ACCEPT,
+            header::ORIGIN,
+            header::COOKIE,
+        ]))
         .allow_credentials(true);
 
     let event_bus: Arc<dyn EventBus> = match NatsEventBus::connect(&config.nats_url).await {

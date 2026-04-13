@@ -5,6 +5,7 @@ pub mod video;
 
 use shared::{auth::AppState, config::AppConfig, db};
 use std::sync::Arc;
+use http::header;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -34,7 +35,13 @@ async fn main() {
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
         .allow_methods(AllowMethods::any())
-        .allow_headers(AllowHeaders::any())
+        .allow_headers(AllowHeaders::list([
+            header::CONTENT_TYPE,
+            header::AUTHORIZATION,
+            header::ACCEPT,
+            header::ORIGIN,
+            header::COOKIE,
+        ]))
         .allow_credentials(true);
 
     let event_bus: std::sync::Arc<dyn shared::events::EventBus> = match shared::events::NatsEventBus::connect(&config.nats_url).await {
