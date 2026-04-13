@@ -1,5 +1,5 @@
 use axum::{
-    routing::{delete, get, post, put},
+    routing::{delete, get, post},
     Router,
 };
 use shared::auth::AppState;
@@ -16,11 +16,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/notifications/{id}", delete(handlers::notifications::delete_notification))
         .route("/v1/notifications/clear", delete(handlers::notifications::clear_all))
         // Preferences
-        .route("/v1/notifications/preferences", get(handlers::preferences::get_preferences))
-        .route("/v1/notifications/preferences", put(handlers::preferences::update_preferences))
+        .route("/v1/notifications/preferences", get(handlers::preferences::get_preferences).put(handlers::preferences::update_preferences))
         // Push tokens
-        .route("/v1/notifications/push-tokens", post(handlers::push_tokens::register_push_token))
-        .route("/v1/notifications/push-tokens", get(handlers::push_tokens::list_my_tokens))
+        .route("/v1/notifications/push-tokens", post(handlers::push_tokens::register_push_token).get(handlers::push_tokens::list_my_tokens))
         .route("/v1/notifications/push-tokens/{token}", delete(handlers::push_tokens::unregister_push_token))
         // Announcements (user-facing)
         .route("/v1/announcements", get(handlers::announcements::list_active_announcements))

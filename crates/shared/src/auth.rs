@@ -38,11 +38,13 @@ impl FromRequestParts<AppState> for AuthUser {
     type Rejection = ApiError;
 
     async fn from_request_parts(parts: &mut Parts, state: &AppState) -> Result<Self, Self::Rejection> {
-        let auth_header = parts
-            .headers
-            .get(header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .ok_or(ApiError::Unauthorized)?;
+        let auth_header = match parts.headers.get(header::AUTHORIZATION).and_then(|v| v.to_str().ok()) {
+            Some(h) => h,
+            None => {
+                tracing::debug!("No Authorization header present");
+                return Err(ApiError::Unauthorized);
+            }
+        };
 
         let token = auth_header
             .strip_prefix("Bearer ")
@@ -50,9 +52,20 @@ impl FromRequestParts<AppState> for AuthUser {
 
         let key = DecodingKey::from_secret(state.config.jwt_secret.as_bytes());
         let mut validation = Validation::default();
-        validation.set_required_spec_claims(&["sub", "exp", "iat"]);
+        validation.set_required_spec_claims(&["exp", "iat"]);
 
-        let token_data = decode::<Claims>(token, &key, &validation)?;
+        let token_data = match decode::<Claims>(token, &key, &validation) {
+            Ok(data) => data,
+            Err(e) => {
+                tracing::warn!(
+                    error = %e,
+                    error_kind = ?e.kind(),
+                    token_prefix = &token[..token.len().min(20)],
+                    "JWT decode failed"
+                );
+                return Err(ApiError::Unauthorized);
+            }
+        };
         let claims = token_data.claims;
 
         if claims.exp < OffsetDateTime::now_utc().unix_timestamp() {
@@ -125,7 +138,6 @@ mod tests {
         let key = DecodingKey::from_secret(b"test-secret");
         let mut validation = Validation::default();
         validation.set_required_spec_claims(&["exp", "iat"]);
-        validation.required_spec_claims.remove("sub");
         let data = decode::<Claims>(&token, &key, &validation).unwrap();
         assert_eq!(data.claims.sub, 42);
         assert_eq!(data.claims.uuid, uuid);
@@ -139,7 +151,6 @@ mod tests {
         let key = DecodingKey::from_secret(b"admin-secret");
         let mut validation = Validation::default();
         validation.set_required_spec_claims(&["exp", "iat"]);
-        validation.required_spec_claims.remove("sub");
         let data = decode::<Claims>(&token, &key, &validation).unwrap();
         assert!(data.claims.is_admin);
     }

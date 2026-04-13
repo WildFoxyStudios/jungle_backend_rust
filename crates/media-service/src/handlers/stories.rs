@@ -78,7 +78,7 @@ pub async fn list_stories(
     // Get active stories from followed users + own stories
     let story_users = sqlx::query_as::<_, StoryUserRow>(
         r#"
-        SELECT DISTINCT s.user_id, u.username, u.first_name, u.last_name, u.avatar
+        SELECT s.user_id, u.username, u.first_name, u.last_name, u.avatar
         FROM stories s
         JOIN users u ON u.id = s.user_id
         WHERE s.expires_at > NOW()
@@ -91,6 +91,7 @@ pub async fn list_stories(
           AND s.user_id NOT IN (
               SELECT muted_id FROM mutes WHERE user_id = $1 AND mute_type = 'story'
           )
+        GROUP BY s.user_id, u.username, u.first_name, u.last_name, u.avatar
         ORDER BY
             CASE WHEN s.user_id = $1 THEN 0 ELSE 1 END,
             MAX(s.created_at) DESC

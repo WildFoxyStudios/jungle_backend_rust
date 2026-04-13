@@ -33,7 +33,7 @@ RUN for d in auth-service user-service post-service messaging-service media-serv
 
 # Cache dependency build
 ENV SQLX_OFFLINE=true
-RUN cargo build --release --workspace 2>/dev/null || true
+RUN cargo build --release --workspace
 
 # Copy real source
 COPY crates/ crates/
@@ -80,4 +80,4 @@ USER app
 ENTRYPOINT ["tini", "--"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD curl -f http://localhost:${PORT:-8080}/health || exit 1
+  CMD curl -f http://localhost:${SERVER_PORT:-8080}/health || exit 1

@@ -35,7 +35,7 @@ pub async fn proxy_request(
         .to_string();
 
     let (max_req, window) = RateLimiter::config_for_path(&path);
-    let rate_key = format!("rl:{}:{}", client_ip, path.split('/').take(3).collect::<Vec<_>>().join("/"));
+    let rate_key = format!("rl:{}:{}", client_ip, path.split('/').take(4).collect::<Vec<_>>().join("/"));
 
     match state.rate_limiter.check(&rate_key, max_req, window).await {
         Err(retry_after) => {

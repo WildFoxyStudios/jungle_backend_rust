@@ -167,7 +167,7 @@ fn verify_ws_token(state: &AppState, token: &str) -> Option<i64> {
 
     let key = DecodingKey::from_secret(state.config.jwt_secret.as_bytes());
     let mut validation = Validation::default();
-    validation.set_required_spec_claims(&["sub", "exp", "iat"]);
+    validation.set_required_spec_claims(&["exp", "iat"]);
 
     decode::<Claims>(token, &key, &validation)
         .ok()

@@ -35,8 +35,12 @@ impl RateLimiter {
 
     /// Get rate limit config based on path prefix
     pub fn config_for_path(path: &str) -> (u64, u64) {
-        if path.starts_with("/v1/auth") {
-            (5, 900) // 5 per 15 min
+        if path.starts_with("/v1/auth/login") || path.starts_with("/v1/auth/register") {
+            (10, 900) // 10 per 15 min
+        } else if path.starts_with("/v1/auth/refresh") {
+            (30, 60) // 30 per min
+        } else if path.starts_with("/v1/auth") {
+            (15, 900) // 15 per 15 min
         } else if path.starts_with("/v1/media/upload") {
             (20, 60) // 20 per min
         } else if path.contains("/search") {

@@ -157,14 +157,14 @@ pub struct FamilyRequest {
     pub relation_type: String,
 }
 
-/// POST /v1/social/family/{user_id} — send family relation request
+/// POST /v1/social/family/{id} — send family relation request
 pub async fn send_family_request(
     State(state): State<AppState>,
     auth: AuthUser,
-    Path(user_id): Path<i64>,
+    Path(id): Path<i64>,
     Json(req): Json<FamilyRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    if auth.user_id == user_id {
+    if auth.user_id == id {
         return Err(ApiError::BadRequest("Cannot add yourself as family".into()));
     }
 
@@ -174,7 +174,7 @@ pub async fn send_family_request(
            ON CONFLICT (user_id, relative_id) DO UPDATE SET relation_type = $3, status = 'pending'"#,
     )
     .bind(auth.user_id)
-    .bind(user_id)
+    .bind(id)
     .bind(&req.relation_type)
     .execute(&state.db)
     .await?;

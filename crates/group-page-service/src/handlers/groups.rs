@@ -150,13 +150,20 @@ pub async fn create_group(
 
 pub async fn get_group(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
+    Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    let group = sqlx::query_as::<_, GroupRow>("SELECT * FROM groups WHERE group_name = $1 AND active = TRUE")
-        .bind(&slug)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| ApiError::NotFound("Group not found".into()))?;
+    let group = if let Ok(numeric_id) = id.parse::<i64>() {
+        sqlx::query_as::<_, GroupRow>("SELECT * FROM groups WHERE id = $1 AND active = TRUE")
+            .bind(numeric_id)
+            .fetch_optional(&state.db)
+            .await?
+    } else {
+        sqlx::query_as::<_, GroupRow>("SELECT * FROM groups WHERE group_name = $1 AND active = TRUE")
+            .bind(&id)
+            .fetch_optional(&state.db)
+            .await?
+    };
+    let group = group.ok_or_else(|| ApiError::NotFound("Group not found".into()))?;
 
     Ok(Json(json!({ "data": group })))
 }

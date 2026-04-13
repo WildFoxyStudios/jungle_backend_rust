@@ -120,6 +120,7 @@ impl ServiceMap {
 
 pub fn create_router(state: GatewayState) -> Router {
     Router::new()
+        .route("/ws", axum::routing::get(crate::ws_proxy::ws_proxy_handler))
         .route("/health", axum::routing::get(gateway_health))
         .fallback(any(proxy::proxy_request))
         .with_state(state)

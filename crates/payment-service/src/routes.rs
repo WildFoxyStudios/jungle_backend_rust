@@ -1,5 +1,5 @@
 use axum::{
-    routing::{delete, get, post, put},
+    routing::{get, post, put},
     Router,
 };
 use shared::auth::AppState;
@@ -28,11 +28,9 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/payments/bank-receipt", post(handlers::pro::upload_bank_receipt))
         // ── Creator Subscriptions ──
         .route("/v1/payments/creator/tiers", post(handlers::creator::create_tier))
-        .route("/v1/payments/creator/tiers/{id}", put(handlers::creator::update_tier))
-        .route("/v1/payments/creator/tiers/{id}", delete(handlers::creator::delete_tier))
+        .route("/v1/payments/creator/tiers/{id}", put(handlers::creator::update_tier).delete(handlers::creator::delete_tier))
         .route("/v1/payments/creator/{user_id}/tiers", get(handlers::creator::list_tiers))
-        .route("/v1/payments/creator/subscribe/{user_id}", post(handlers::creator::subscribe))
-        .route("/v1/payments/creator/subscribe/{user_id}", delete(handlers::creator::unsubscribe))
+        .route("/v1/payments/creator/subscribe/{user_id}", post(handlers::creator::subscribe).delete(handlers::creator::unsubscribe))
         .route("/v1/payments/creator/subscribers", get(handlers::creator::list_subscribers))
         .route("/v1/payments/creator/subscriptions", get(handlers::creator::my_subscriptions))
         // ── Webhooks ──

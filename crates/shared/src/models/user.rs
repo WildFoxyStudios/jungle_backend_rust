@@ -92,6 +92,7 @@ impl From<&User> for PublicUser {
 
 #[derive(Debug, Clone, Serialize)]
 pub struct AuthUserResponse {
+    pub id: i64,
     pub uuid: Uuid,
     pub username: String,
     pub email: String,
@@ -115,6 +116,7 @@ impl From<&User> for AuthUserResponse {
         };
 
         AuthUserResponse {
+            id: u.id,
             uuid: u.uuid,
             username: u.username.clone(),
             email: u.email.clone(),

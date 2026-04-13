@@ -3,7 +3,7 @@ mod routes;
 
 use shared::{auth::AppState, config::AppConfig, db, events::{NatsEventBus, NoopEventBus, EventBus}};
 use std::sync::Arc;
-use http::header;
+use http::{header, Method};
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
@@ -26,7 +26,14 @@ async fn main() {
     let origins: Vec<_> = config.allowed_origins.iter().filter_map(|o| o.parse().ok()).collect();
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
-        .allow_methods(AllowMethods::any())
+        .allow_methods(AllowMethods::list([
+            Method::GET,
+            Method::POST,
+            Method::PUT,
+            Method::PATCH,
+            Method::DELETE,
+            Method::OPTIONS,
+        ]))
         .allow_headers(AllowHeaders::list([
             header::CONTENT_TYPE,
             header::AUTHORIZATION,

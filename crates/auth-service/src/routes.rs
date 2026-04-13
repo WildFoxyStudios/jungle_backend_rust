@@ -38,11 +38,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/auth/sessions/{id}", delete(handlers::sessions::revoke_session))
         .route("/v1/auth/sessions/revoke-all", post(handlers::sessions::revoke_all_sessions))
         // ── OAuth Developer Portal ──
-        .route("/v1/oauth/apps", get(handlers::oauth_apps::list_apps))
-        .route("/v1/oauth/apps", post(handlers::oauth_apps::create_app))
-        .route("/v1/oauth/apps/{id}", get(handlers::oauth_apps::get_app))
-        .route("/v1/oauth/apps/{id}", put(handlers::oauth_apps::update_app))
-        .route("/v1/oauth/apps/{id}", delete(handlers::oauth_apps::delete_app))
+        .route("/v1/oauth/apps", get(handlers::oauth_apps::list_apps).post(handlers::oauth_apps::create_app))
+        .route("/v1/oauth/apps/{id}", get(handlers::oauth_apps::get_app).put(handlers::oauth_apps::update_app).delete(handlers::oauth_apps::delete_app))
         .route("/v1/oauth/apps/{id}/permissions", get(handlers::oauth_apps::get_app_permissions))
         .route("/v1/oauth/authorize", post(handlers::oauth_apps::authorize))
         .route("/v1/oauth/token", post(handlers::oauth_apps::exchange_token))

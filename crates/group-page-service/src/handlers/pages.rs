@@ -147,13 +147,20 @@ pub async fn create_page(
 
 pub async fn get_page(
     State(state): State<AppState>,
-    Path(slug): Path<String>,
+    Path(id): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
-    let page = sqlx::query_as::<_, PageRow>("SELECT * FROM pages WHERE page_name = $1 AND active = TRUE")
-        .bind(&slug)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| ApiError::NotFound("Page not found".into()))?;
+    let page = if let Ok(numeric_id) = id.parse::<i64>() {
+        sqlx::query_as::<_, PageRow>("SELECT * FROM pages WHERE id = $1 AND active = TRUE")
+            .bind(numeric_id)
+            .fetch_optional(&state.db)
+            .await?
+    } else {
+        sqlx::query_as::<_, PageRow>("SELECT * FROM pages WHERE page_name = $1 AND active = TRUE")
+            .bind(&id)
+            .fetch_optional(&state.db)
+            .await?
+    };
+    let page = page.ok_or_else(|| ApiError::NotFound("Page not found".into()))?;
 
     Ok(Json(json!({ "data": page })))
 }
