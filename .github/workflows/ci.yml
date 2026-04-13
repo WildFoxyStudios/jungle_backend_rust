@@ -148,14 +148,14 @@ jobs:
         working-directory: backend
         run: |
           TAG="${{ github.ref == 'refs/heads/main' && 'latest' || 'staging' }}"
-          docker build -t ${{ vars.REGISTRY_URL }}/wowonder-backend:${TAG} .
-          docker push ${{ vars.REGISTRY_URL }}/wowonder-backend:${TAG}
+          docker build -t ${{ vars.REGISTRY_URL }}/Jungle-backend:${TAG} .
+          docker push ${{ vars.REGISTRY_URL }}/Jungle-backend:${TAG}
       - name: Build & push frontend
         working-directory: frontend
         run: |
           TAG="${{ github.ref == 'refs/heads/main' && 'latest' || 'staging' }}"
-          docker build -f apps/web/Dockerfile -t ${{ vars.REGISTRY_URL }}/wowonder-web:${TAG} .
-          docker push ${{ vars.REGISTRY_URL }}/wowonder-web:${TAG}
+          docker build -f apps/web/Dockerfile -t ${{ vars.REGISTRY_URL }}/Jungle-web:${TAG} .
+          docker push ${{ vars.REGISTRY_URL }}/Jungle-web:${TAG}
 
   deploy-staging:
     name: Deploy to Staging
@@ -169,7 +169,7 @@ jobs:
         run: |
           echo "Deploying to staging environment..."
           # SSH deploy or kubectl apply or docker-compose pull+up
-          # ssh ${{ secrets.STAGING_HOST }} "cd /opt/wowonder && docker compose pull && docker compose up -d"
+          # ssh ${{ secrets.STAGING_HOST }} "cd /opt/Jungle && docker compose pull && docker compose up -d"
 
   deploy-production:
     name: Deploy to Production
@@ -188,7 +188,7 @@ jobs:
       - name: Deploy to production
         run: |
           echo "Deploying to production environment..."
-          # ssh ${{ secrets.PROD_HOST }} "cd /opt/wowonder && docker compose pull && docker compose up -d"
+          # ssh ${{ secrets.PROD_HOST }} "cd /opt/Jungle && docker compose pull && docker compose up -d"
       - name: Health check
         run: |
           echo "Checking health endpoints..."
