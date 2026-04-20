@@ -3,7 +3,7 @@ use axum::{
     Json,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::json;
+use serde_json::{json, Value};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -153,6 +153,29 @@ pub async fn boost_post(
     }
 
     Ok(Json(json!({ "data": { "boosted": true } })))
+}
+
+/// DELETE /v1/posts/{id}/boost — stop boosting a post. Always allowed for
+/// the owner even if their Pro subscription has lapsed, so they can turn off
+/// a boost they no longer want.
+pub async fn unboost_post(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let result = sqlx::query(
+        "UPDATE posts SET is_boosted = FALSE WHERE id = $1 AND user_id = $2 AND deleted_at IS NULL",
+    )
+    .bind(id)
+    .bind(auth.user_id)
+    .execute(&state.db)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        return Err(ApiError::NotFound("Post not found or access denied".into()));
+    }
+
+    Ok(Json(json!({ "data": { "boosted": false } })))
 }
 
 // ── Report Post ────────────────────────────────────────────────────
@@ -485,4 +508,60 @@ pub async fn list_reaction_types(
     .await?;
 
     Ok(Json(json!({ "data": types })))
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// GET /v1/posts/open-to-work — feed of "open to work" posts
+// ═══════════════════════════════════════════════════════════════════
+
+pub async fn open_to_work_feed(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Query(params): Query<PaginationParams>,
+) -> Result<Json<Value>, ApiError> {
+    let limit = params.limit();
+    let cursor = params.cursor_id();
+
+    type Row = (i64, i64, String, Option<String>, Option<String>, String, Option<String>, time::OffsetDateTime);
+    let rows: Vec<Row> = sqlx::query_as(
+        r#"SELECT p.id, p.user_id, u.username, u.first_name, u.last_name,
+                  COALESCE(p.text, ''), u.avatar, p.created_at
+             FROM posts p
+             JOIN users u ON u.id = p.user_id
+            WHERE p.post_type = 'open_to_work'
+              AND p.deleted_at IS NULL
+              AND p.published_at IS NOT NULL
+              AND ($1::bigint IS NULL OR p.id < $1)
+         ORDER BY p.id DESC
+            LIMIT $2"#,
+    )
+    .bind(cursor)
+    .bind(limit + 1)
+    .fetch_all(&state.db)
+    .await?;
+
+    let has_more = rows.len() as i64 > limit;
+    let rows: Vec<Row> = rows.into_iter().take(limit as usize).collect();
+    let next_cursor = rows.last().map(|r| r.0);
+
+    let data: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, uid, username, fn_, ln, text, avatar, created)| {
+            json!({
+                "id": id,
+                "user_id": uid,
+                "username": username,
+                "first_name": fn_,
+                "last_name": ln,
+                "text": text,
+                "avatar": avatar,
+                "created_at": created.to_string(),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "data": data,
+        "meta": { "has_more": has_more, "next_cursor": next_cursor }
+    })))
 }

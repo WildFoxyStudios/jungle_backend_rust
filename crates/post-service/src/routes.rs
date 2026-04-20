@@ -50,7 +50,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/posts/{id}/poll/vote", post(handlers::extras::vote_poll))
         // Pin / Boost / Report
         .route("/v1/posts/{id}/pin", post(handlers::extras::pin_post).delete(handlers::extras::unpin_post))
-        .route("/v1/posts/{id}/boost", post(handlers::extras::boost_post))
+        .route(
+            "/v1/posts/{id}/boost",
+            post(handlers::extras::boost_post).delete(handlers::extras::unboost_post),
+        )
         .route("/v1/posts/{id}/report", post(handlers::extras::report_post))
         // Explore & Memories
         .route("/v1/feed/explore", get(handlers::extras::explore_feed))
@@ -75,6 +78,17 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/live/friends", get(handlers::live::live_friends))
         .route("/v1/live/{id}/comment", post(handlers::live::live_comment))
         .route("/v1/live/{id}/react", post(handlers::live::live_react))
+        // ── XHR-equivalent endpoints (Batch 4) ──
+        .route("/v1/posts/preview-url", post(handlers::post_xhr::preview_url))
+        .route("/v1/posts/audio", post(handlers::post_xhr::create_audio_post))
+        .route("/v1/posts/open-to-work", get(handlers::extras::open_to_work_feed))
+        .route("/v1/posts/{post_id}/media/{media_id}", delete(handlers::post_xhr::delete_post_media))
+        .route("/v1/posts/{id}/comments-status", put(handlers::post_xhr::set_comments_status))
+        .route("/v1/posts/{id}/mark-sold", post(handlers::post_xhr::mark_sold))
+        .route("/v1/posts/{id}/notify-followers", post(handlers::post_xhr::notify_followers))
+        .route("/v1/posts/{id}/video-view", post(handlers::post_xhr::video_view))
+        .route("/v1/posts/{id}/wonder", post(handlers::post_xhr::toggle_wonder))
+        .route("/v1/posts/{id}/reactors", get(handlers::post_xhr::list_reactors))
         // Health
         .route("/health", get(handlers::health::health_check))
         .with_state(state)

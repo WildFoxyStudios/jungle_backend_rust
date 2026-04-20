@@ -236,7 +236,7 @@ pub async fn get_saved_posts(
     auth: AuthUser,
     axum::extract::Query(params): axum::extract::Query<shared::pagination::PaginationParams>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let limit = params.limit.unwrap_or(20).min(50) as i64;
+    let limit = params.limit.unwrap_or(20).min(50);
     let cursor = params.cursor.and_then(|c| c.parse::<i64>().ok());
 
     let rows = sqlx::query_as::<_, (i64, String, String, String, String, i32, i32, i32, i64, String, String, String, bool, String, String)>(

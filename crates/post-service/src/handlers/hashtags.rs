@@ -17,15 +17,15 @@ pub struct HashtagRow {
     pub id: i64,
     pub tag: String,
     pub use_count: i32,
-    pub is_trending: bool,
-    pub created_at: Option<OffsetDateTime>,
+    pub trending: bool,
+    pub last_used_at: Option<OffsetDateTime>,
 }
 
 pub async fn trending_hashtags(
     State(state): State<AppState>,
 ) -> Result<Json<Value>, ApiError> {
     let tags = sqlx::query_as::<_, HashtagRow>(
-        "SELECT id, tag, use_count, is_trending, created_at FROM hashtags WHERE is_trending = TRUE ORDER BY use_count DESC LIMIT 20",
+        "SELECT id, tag, use_count, trending, last_used_at FROM hashtags WHERE trending = TRUE ORDER BY use_count DESC LIMIT 20",
     )
     .fetch_all(&state.db)
     .await?;
@@ -77,7 +77,7 @@ pub async fn search_hashtags(
 ) -> Result<Json<Value>, ApiError> {
     let ilike = format!("{}%", q.q);
     let tags = sqlx::query_as::<_, HashtagRow>(
-        "SELECT id, tag, use_count, is_trending, created_at FROM hashtags WHERE tag ILIKE $1 ORDER BY use_count DESC LIMIT 20",
+        "SELECT id, tag, use_count, trending, last_used_at FROM hashtags WHERE tag ILIKE $1 ORDER BY use_count DESC LIMIT 20",
     )
     .bind(&ilike)
     .fetch_all(&state.db)

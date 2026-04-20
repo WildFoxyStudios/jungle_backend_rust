@@ -627,3 +627,179 @@ pub async fn mark_all_read(
 
     Ok(Json(json!({ "data": { "marked_read": true } })))
 }
+
+// ─── Conversation-scoped search & media tab ──────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct ConversationSearchQuery {
+    #[serde(flatten)]
+    pub pagination: PaginationParams,
+    pub q: String,
+}
+
+#[derive(Debug, Serialize, FromRow)]
+pub struct ConversationMessageSearchRow {
+    pub id: i64,
+    pub conversation_id: i64,
+    pub sender_id: i64,
+    pub sender_username: String,
+    pub sender_first_name: String,
+    pub sender_last_name: String,
+    pub sender_avatar: String,
+    pub content: String,
+    pub message_type: String,
+    pub media: Value,
+    pub created_at: OffsetDateTime,
+}
+
+/// GET /v1/conversations/{id}/search?q=... — Full-text search scoped to this thread.
+/// PHP parity: `api/chat` with `type=search`.
+pub async fn search_messages(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(conversation_id): Path<i64>,
+    Query(params): Query<ConversationSearchQuery>,
+) -> Result<Json<Value>, ApiError> {
+    verify_membership(&state, conversation_id, auth.user_id).await?;
+
+    let query = params.q.trim();
+    if query.is_empty() {
+        return Err(ApiError::BadRequest("q parameter is required".into()));
+    }
+    // Cap the pattern length to avoid pathological LIKE patterns.
+    let query = if query.len() > 200 { &query[..200] } else { query };
+
+    let like_pattern = format!("%{}%", escape_like(query));
+    let limit = params.pagination.limit();
+    let cursor = params.pagination.cursor_id();
+
+    let messages = sqlx::query_as::<_, ConversationMessageSearchRow>(
+        r#"
+        SELECT
+            m.id, m.conversation_id, m.sender_id,
+            u.username   AS sender_username,
+            u.first_name AS sender_first_name,
+            u.last_name  AS sender_last_name,
+            u.avatar     AS sender_avatar,
+            m.content, m.message_type, m.media, m.created_at
+        FROM messages m
+        JOIN users u ON u.id = m.sender_id
+        WHERE m.conversation_id = $1
+          AND m.deleted_at IS NULL
+          AND m.content ILIKE $2
+          AND ($3::bigint IS NULL OR m.id < $3)
+        ORDER BY m.id DESC
+        LIMIT $4
+        "#,
+    )
+    .bind(conversation_id)
+    .bind(&like_pattern)
+    .bind(cursor)
+    .bind(limit + 1)
+    .fetch_all(&state.db)
+    .await?;
+
+    let has_more = messages.len() as i64 > limit;
+    let messages: Vec<_> = messages.into_iter().take(limit as usize).collect();
+    let next_cursor = messages.last().map(|m| m.id.to_string());
+
+    Ok(Json(json!({
+        "data": messages,
+        "meta": { "cursor": next_cursor, "has_more": has_more, "q": params.q }
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConversationMediaQuery {
+    #[serde(flatten)]
+    pub pagination: PaginationParams,
+    /// Optional filter: image | video | audio | file
+    pub r#type: Option<String>,
+}
+
+/// GET /v1/conversations/{id}/media — Photos / files / videos shared inside this chat.
+/// PHP parity: `api/chat` with `type=get_media`.
+pub async fn list_conversation_media(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(conversation_id): Path<i64>,
+    Query(params): Query<ConversationMediaQuery>,
+) -> Result<Json<Value>, ApiError> {
+    verify_membership(&state, conversation_id, auth.user_id).await?;
+
+    let limit = params.pagination.limit();
+    let cursor = params.pagination.cursor_id();
+    let kind = params.r#type.as_deref().map(str::trim).filter(|s| !s.is_empty());
+
+    // Accept: image | video | audio | file.  "file" maps to `message_type = 'file'`
+    // (generic attachment).  Anything else is rejected.
+    let allowed = ["image", "video", "audio", "file"];
+    if let Some(k) = kind {
+        if !allowed.contains(&k) {
+            return Err(ApiError::BadRequest(format!(
+                "type must be one of {}",
+                allowed.join(", ")
+            )));
+        }
+    }
+
+    let messages = sqlx::query_as::<_, MessageMediaRow>(
+        r#"
+        SELECT m.id, m.sender_id, u.username AS sender_username, u.avatar AS sender_avatar,
+               m.message_type, m.media, m.created_at
+          FROM messages m
+          JOIN users u ON u.id = m.sender_id
+         WHERE m.conversation_id = $1
+           AND m.deleted_at IS NULL
+           AND (
+                m.message_type IN ('image', 'video', 'audio', 'file')
+                OR jsonb_array_length(COALESCE(m.media, '[]'::jsonb)) > 0
+               )
+           AND ($2::text IS NULL OR m.message_type = $2)
+           AND ($3::bigint IS NULL OR m.id < $3)
+         ORDER BY m.id DESC
+         LIMIT $4
+        "#,
+    )
+    .bind(conversation_id)
+    .bind(kind)
+    .bind(cursor)
+    .bind(limit + 1)
+    .fetch_all(&state.db)
+    .await?;
+
+    let has_more = messages.len() as i64 > limit;
+    let messages: Vec<_> = messages.into_iter().take(limit as usize).collect();
+    let next_cursor = messages.last().map(|m| m.id.to_string());
+
+    Ok(Json(json!({
+        "data": messages,
+        "meta": { "cursor": next_cursor, "has_more": has_more, "type": params.r#type }
+    })))
+}
+
+#[derive(Debug, Serialize, FromRow)]
+pub struct MessageMediaRow {
+    pub id: i64,
+    pub sender_id: i64,
+    pub sender_username: String,
+    pub sender_avatar: String,
+    pub message_type: String,
+    pub media: Value,
+    pub created_at: OffsetDateTime,
+}
+
+/// Escape `%` and `_` so a user-supplied query is matched literally by ILIKE.
+fn escape_like(input: &str) -> String {
+    let mut out = String::with_capacity(input.len());
+    for ch in input.chars() {
+        match ch {
+            '%' | '_' | '\\' => {
+                out.push('\\');
+                out.push(ch);
+            }
+            _ => out.push(ch),
+        }
+    }
+    out
+}

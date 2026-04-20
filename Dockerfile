@@ -75,6 +75,7 @@ COPY --from=builder /app/target/release/ai-service /usr/local/bin/
 COPY --from=builder /app/migrations /app/migrations
 
 WORKDIR /app
+RUN mkdir -p /app/uploads && chown -R app:app /app/uploads
 USER app
 
 ENTRYPOINT ["tini", "--"]

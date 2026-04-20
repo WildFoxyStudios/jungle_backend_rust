@@ -256,3 +256,103 @@ pub async fn upsert_pro_plan(
 
     Ok(Json(json!({ "data": { "id": id } })))
 }
+
+/// GET /v1/admin/payment-requests
+///
+/// Dedicated endpoint for payment requests management.
+/// Returns pending/completed/failed payment transactions with summary stats.
+#[derive(Debug, Deserialize)]
+pub struct PaymentRequestsQuery {
+    pub page: Option<i64>,
+    pub limit: Option<i64>,
+    pub status: Option<String>, // pending, completed, failed, refunded
+    pub gateway: Option<String>,
+}
+
+pub async fn list_payment_requests(
+    State(state): State<AppState>,
+    Query(q): Query<PaymentRequestsQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let limit = q.limit.unwrap_or(20).clamp(1, 100);
+    let offset = (q.page.unwrap_or(1) - 1).max(0) * limit;
+
+    // Base query with optional filters
+    let rows = sqlx::query_as::<_, (i64, i64, rust_decimal::Decimal, String, String, String, String, time::OffsetDateTime)>(
+        r#"SELECT pt.id, pt.user_id, pt.amount, pt.currency, pt.provider as gateway, pt.status, pt.description, pt.created_at
+        FROM payment_transactions pt
+        WHERE ($1::text IS NULL OR pt.status = $1)
+          AND ($2::text IS NULL OR pt.provider = $2)
+        ORDER BY 
+            CASE pt.status
+                WHEN 'pending' THEN 1
+                WHEN 'completed' THEN 2
+                WHEN 'failed' THEN 3
+                ELSE 4
+            END,
+            pt.created_at DESC
+        LIMIT $3 OFFSET $4"#,
+    )
+    .bind(q.status.as_deref())
+    .bind(q.gateway.as_deref())
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&state.db)
+    .await?;
+
+    // Total count for pagination
+    let total: i64 = sqlx::query_scalar(
+        r#"SELECT COUNT(*)::bigint
+        FROM payment_transactions pt
+        WHERE ($1::text IS NULL OR pt.status = $1)
+          AND ($2::text IS NULL OR pt.provider = $2)"#,
+    )
+    .bind(q.status.as_deref())
+    .bind(q.gateway.as_deref())
+    .fetch_one(&state.db)
+    .await?;
+
+    // Summary stats
+    let pending_total: rust_decimal::Decimal = sqlx::query_scalar(
+        r#"SELECT COALESCE(SUM(amount), 0)
+        FROM payment_transactions
+        WHERE status = 'pending'"#,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    let today_total: rust_decimal::Decimal = sqlx::query_scalar(
+        r#"SELECT COALESCE(SUM(amount), 0)
+        FROM payment_transactions
+        WHERE status = 'completed'
+          AND created_at > NOW() - INTERVAL '24 hours'"#,
+    )
+    .fetch_one(&state.db)
+    .await?;
+
+    let data: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, user_id, amount, currency, gateway, status, description, created_at)| {
+            json!({
+                "id": id,
+                "user_id": user_id,
+                "amount": amount.to_string(),
+                "currency": currency,
+                "gateway": gateway,
+                "status": status,
+                "description": description,
+                "created_at": created_at.to_string()
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "data": data,
+        "meta": {
+            "page": q.page.unwrap_or(1),
+            "limit": limit,
+            "total": total,
+            "pending_total": pending_total.to_string(),
+            "today_total": today_total.to_string(),
+        }
+    })))
+}

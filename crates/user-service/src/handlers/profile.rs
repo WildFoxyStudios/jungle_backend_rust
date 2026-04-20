@@ -120,6 +120,8 @@ pub async fn get_user(
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct UpdateProfileRequest {
+    #[validate(length(min = 3, max = 30))]
+    pub username: Option<String>,
     #[validate(length(max = 50))]
     pub first_name: Option<String>,
     #[validate(length(max = 50))]
@@ -130,6 +132,8 @@ pub struct UpdateProfileRequest {
     pub birthday: Option<String>,
     #[validate(length(max = 100))]
     pub city: Option<String>,
+    #[validate(length(max = 100))]
+    pub location: Option<String>,
     #[validate(length(max = 255))]
     pub website: Option<String>,
     #[validate(length(max = 200))]
@@ -146,29 +150,50 @@ pub async fn update_me(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     req.validate()?;
 
+    // Username uniqueness check
+    if let Some(ref new_username) = req.username {
+        let taken: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM users WHERE LOWER(username) = $1 AND id != $2)",
+        )
+        .bind(new_username.to_lowercase())
+        .bind(auth.user_id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(false);
+
+        if taken {
+            return Err(ApiError::Conflict("Username is already taken".into()));
+        }
+    }
+
+    // Accept both "location" and "city" from the frontend
+    let city_value = req.location.as_ref().or(req.city.as_ref());
+
     let user = sqlx::query_as::<_, User>(
         r#"UPDATE users SET
-            first_name = COALESCE($2, first_name),
-            last_name = COALESCE($3, last_name),
-            about = COALESCE($4, about),
-            gender = COALESCE($5, gender),
-            birthday = COALESCE($6, birthday),
-            city = COALESCE($7, city),
-            website = COALESCE($8, website),
-            school = COALESCE($9, school),
-            working = COALESCE($10, working),
-            language = COALESCE($11, language),
+            username = COALESCE($2, username),
+            first_name = COALESCE($3, first_name),
+            last_name = COALESCE($4, last_name),
+            about = COALESCE($5, about),
+            gender = COALESCE($6, gender),
+            birthday = COALESCE($7, birthday),
+            city = COALESCE($8, city),
+            website = COALESCE($9, website),
+            school = COALESCE($10, school),
+            working = COALESCE($11, working),
+            language = COALESCE($12, language),
             updated_at = NOW()
         WHERE id = $1 AND deleted_at IS NULL
         RETURNING *"#,
     )
     .bind(auth.user_id)
+    .bind(&req.username)
     .bind(&req.first_name)
     .bind(&req.last_name)
     .bind(&req.about)
     .bind(&req.gender)
     .bind(&req.birthday)
-    .bind(&req.city)
+    .bind(city_value)
     .bind(&req.website)
     .bind(&req.school)
     .bind(&req.working)
@@ -288,4 +313,76 @@ pub async fn get_social_links(
     .flatten();
 
     Ok(Json(serde_json::json!({ "data": links.unwrap_or(serde_json::json!({})) })))
+}
+
+/// GET /v1/users/{username}/popover
+///
+/// Optimized lightweight response for hover cards. Returns only the fields
+/// required by the UI (~70% smaller than `get_user`).
+pub async fn get_user_popover(
+    State(state): State<AppState>,
+    auth: shared::auth::OptionalAuth,
+    Path(username): Path<String>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    type PopRow = (
+        i64,
+        String,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        bool,
+        i64,
+        i64,
+        i64,
+    );
+
+    let me_id: Option<i64> = auth.0.as_ref().map(|u| u.user_id);
+
+    let row: Option<PopRow> = sqlx::query_as(
+        r#"SELECT u.id, u.username, u.first_name, u.last_name, u.avatar,
+                  u.about, COALESCE(u.is_verified, FALSE),
+                  (SELECT COUNT(*) FROM follows f WHERE f.following_id = u.id AND f.status = 'active') AS follower_count,
+                  (SELECT COUNT(*) FROM follows f WHERE f.follower_id = u.id AND f.status = 'active') AS following_count,
+                  (SELECT COUNT(*) FROM posts p WHERE p.user_id = u.id AND p.deleted_at IS NULL) AS post_count
+             FROM users u
+            WHERE LOWER(u.username) = $1
+              AND u.deleted_at IS NULL
+              AND u.is_active = TRUE"#,
+    )
+    .bind(username.to_lowercase())
+    .fetch_optional(&state.db)
+    .await?;
+
+    let (id, username, first_name, last_name, avatar, about, is_verified, followers, following, posts) =
+        row.ok_or(ApiError::NotFound("User not found".into()))?;
+
+    let is_following = if let Some(my_id) = me_id {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM follows WHERE follower_id = $1 AND following_id = $2 AND status = 'active')",
+        )
+        .bind(my_id)
+        .bind(id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(false)
+    } else {
+        false
+    };
+
+    Ok(Json(serde_json::json!({
+        "data": {
+            "id": id,
+            "username": username,
+            "first_name": first_name,
+            "last_name": last_name,
+            "avatar": avatar,
+            "about": about,
+            "is_verified": is_verified,
+            "follower_count": followers,
+            "following_count": following,
+            "post_count": posts,
+            "is_following": is_following,
+        }
+    })))
 }

@@ -5,16 +5,9 @@ use shared::{auth::AppState, config::AppConfig, db};
 use std::sync::Arc;
 use http::{header, Method};
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
-
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "info,sqlx=warn".into()),
-        ))
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    shared::telemetry::init("admin-service");
 
     let config = Arc::new(AppConfig::from_env());
     let pool = db::create_pool(&config.database_url).await;
@@ -50,8 +43,13 @@ async fn main() {
         Err(e) => { tracing::warn!("NATS unavailable: {e}"); std::sync::Arc::new(shared::events::NoopEventBus) }
     };
     let state = AppState { db: pool, redis: redis_conn, config: config.clone(), event_bus };
-    let app = routes::create_router(state)
+    let app = routes::create_router(state.clone())
         .route("/metrics", axum::routing::get(shared::metrics::metrics_handler))
+        // Audit every mutating admin request (POST/PUT/PATCH/DELETE on /v1/admin/*)
+        .layer(axum::middleware::from_fn_with_state(
+            state,
+            shared::audit::audit_admin,
+        ))
         .layer(axum::middleware::from_fn(shared::metrics::metrics_middleware))
         .layer(cors);
     let addr = config.listen_addr();

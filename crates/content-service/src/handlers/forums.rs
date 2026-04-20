@@ -473,3 +473,175 @@ pub async fn delete_reply(
 
     Ok(Json(json!({ "data": { "deleted": true } })))
 }
+
+#[derive(Debug, Deserialize)]
+pub struct SearchQuery {
+    pub q: Option<String>,
+    pub cursor: Option<String>,
+    pub limit: Option<i64>,
+}
+
+impl SearchQuery {
+    fn limit(&self) -> i64 {
+        self.limit.unwrap_or(20).clamp(1, 100)
+    }
+    fn cursor_id(&self) -> Option<i64> {
+        self.cursor.as_ref().and_then(|c| c.parse::<i64>().ok())
+    }
+}
+
+/// GET /v1/forums/search?q=... — Full-text search across thread titles and content.
+pub async fn search_threads(
+    State(state): State<AppState>,
+    Query(params): Query<SearchQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let limit = params.limit();
+    let cursor = params.cursor_id();
+    let q = params.q.unwrap_or_default();
+    let q_trimmed = q.trim();
+    if q_trimmed.is_empty() {
+        return Ok(Json(json!({ "data": [], "meta": { "has_more": false } })));
+    }
+
+    let like_pattern = format!("%{}%", q_trimmed);
+
+    let threads = sqlx::query_as::<_, ThreadRow>(
+        r#"
+        SELECT t.id, t.forum_id, t.user_id, t.title, t.content, t.view_count, t.reply_count,
+            t.last_reply_at, t.created_at, u.username, u.avatar
+        FROM forum_threads t JOIN users u ON u.id = t.user_id
+        WHERE (t.title ILIKE $1 OR t.content ILIKE $1)
+          AND ($2::bigint IS NULL OR t.id < $2)
+        ORDER BY t.id DESC LIMIT $3
+        "#,
+    )
+    .bind(&like_pattern)
+    .bind(cursor)
+    .bind(limit + 1)
+    .fetch_all(&state.db)
+    .await?;
+
+    let has_more = threads.len() as i64 > limit;
+    let threads: Vec<_> = threads.into_iter().take(limit as usize).collect();
+
+    Ok(Json(json!({ "data": threads, "meta": { "has_more": has_more } })))
+}
+
+#[derive(Debug, Serialize, FromRow)]
+struct TopPosterRow {
+    pub user_id: i64,
+    pub username: String,
+    pub first_name: String,
+    pub last_name: String,
+    pub avatar: String,
+    pub is_verified: bool,
+    pub thread_count: i64,
+    pub reply_count: i64,
+}
+
+/// GET /v1/forums/members — Top posters leaderboard (ranked by thread_count + reply_count).
+pub async fn list_top_posters(
+    State(state): State<AppState>,
+) -> Result<Json<Value>, ApiError> {
+    let rows = sqlx::query_as::<_, TopPosterRow>(
+        r#"
+        WITH thread_counts AS (
+            SELECT user_id, COUNT(*)::bigint AS cnt FROM forum_threads GROUP BY user_id
+        ),
+        reply_counts AS (
+            SELECT user_id, COUNT(*)::bigint AS cnt FROM forum_replies GROUP BY user_id
+        )
+        SELECT u.id AS user_id, u.username, u.first_name, u.last_name, u.avatar, u.is_verified,
+            COALESCE(tc.cnt, 0) AS thread_count,
+            COALESCE(rc.cnt, 0) AS reply_count
+        FROM users u
+        LEFT JOIN thread_counts tc ON tc.user_id = u.id
+        LEFT JOIN reply_counts rc  ON rc.user_id = u.id
+        WHERE COALESCE(tc.cnt, 0) + COALESCE(rc.cnt, 0) > 0
+        ORDER BY (COALESCE(tc.cnt, 0) + COALESCE(rc.cnt, 0)) DESC
+        LIMIT 50
+        "#,
+    )
+    .fetch_all(&state.db)
+    .await?;
+
+    let data: Vec<Value> = rows
+        .into_iter()
+        .map(|r| json!({
+            "user": {
+                "id": r.user_id,
+                "username": r.username,
+                "first_name": r.first_name,
+                "last_name": r.last_name,
+                "avatar": r.avatar,
+                "is_verified": r.is_verified,
+            },
+            "thread_count": r.thread_count,
+            "reply_count": r.reply_count,
+        }))
+        .collect();
+
+    Ok(Json(json!({ "data": data })))
+}
+
+/// GET /v1/forums/my/threads — Current user's forum threads.
+pub async fn my_threads(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(params): Query<PaginationParams>,
+) -> Result<Json<Value>, ApiError> {
+    let limit = params.limit();
+    let cursor = params.cursor_id();
+
+    let threads = sqlx::query_as::<_, ThreadRow>(
+        r#"
+        SELECT t.id, t.forum_id, t.user_id, t.title, t.content, t.view_count, t.reply_count,
+            t.last_reply_at, t.created_at, u.username, u.avatar
+        FROM forum_threads t JOIN users u ON u.id = t.user_id
+        WHERE t.user_id = $1
+          AND ($2::bigint IS NULL OR t.id < $2)
+        ORDER BY t.id DESC LIMIT $3
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(cursor)
+    .bind(limit + 1)
+    .fetch_all(&state.db)
+    .await?;
+
+    let has_more = threads.len() as i64 > limit;
+    let threads: Vec<_> = threads.into_iter().take(limit as usize).collect();
+
+    Ok(Json(json!({ "data": threads, "meta": { "has_more": has_more } })))
+}
+
+/// GET /v1/forums/my/replies — Current user's forum replies.
+pub async fn my_replies(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(params): Query<PaginationParams>,
+) -> Result<Json<Value>, ApiError> {
+    let limit = params.limit();
+    let cursor = params.cursor_id();
+
+    let replies = sqlx::query_as::<_, ReplyRow>(
+        r#"
+        SELECT r.id, r.thread_id, r.user_id, r.content, r.quoted_reply_id, r.created_at,
+            u.username, u.avatar
+        FROM forum_replies r JOIN users u ON u.id = r.user_id
+        WHERE r.user_id = $1
+          AND ($2::bigint IS NULL OR r.id < $2)
+        ORDER BY r.id DESC LIMIT $3
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(cursor)
+    .bind(limit + 1)
+    .fetch_all(&state.db)
+    .await?;
+
+    let has_more = replies.len() as i64 > limit;
+    let replies: Vec<_> = replies.into_iter().take(limit as usize).collect();
+
+    Ok(Json(json!({ "data": replies, "meta": { "has_more": has_more } })))
+}

@@ -356,6 +356,100 @@ pub async fn attending_events(
     Ok(Json(json!({ "data": events })))
 }
 
+async fn list_my_events_by_response(
+    state: &AppState,
+    user_id: i64,
+    response: &str,
+    params: &PaginationParams,
+) -> Result<Json<Value>, ApiError> {
+    let limit = params.limit();
+    let cursor = params.cursor_id();
+
+    let events = sqlx::query_as::<_, EventSummary>(
+        r#"
+        SELECT e.id, e.name, e.cover, e.start_at, e.end_at,
+            (SELECT COUNT(*) FROM event_responses WHERE event_id = e.id AND response = 'going') AS going_count
+        FROM events e
+        JOIN event_responses er ON er.event_id = e.id
+        WHERE er.user_id = $1 AND er.response = $2
+          AND e.end_at > NOW()
+          AND ($3::bigint IS NULL OR e.id < $3)
+        ORDER BY e.start_at ASC LIMIT $4
+        "#,
+    )
+    .bind(user_id)
+    .bind(response)
+    .bind(cursor)
+    .bind(limit + 1)
+    .fetch_all(&state.db)
+    .await?;
+
+    let has_more = events.len() as i64 > limit;
+    let events: Vec<_> = events.into_iter().take(limit as usize).collect();
+
+    Ok(Json(json!({ "data": events, "meta": { "has_more": has_more } })))
+}
+
+/// GET /v1/events/going — Current user's "going" events.
+pub async fn going_events(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(params): Query<PaginationParams>,
+) -> Result<Json<Value>, ApiError> {
+    list_my_events_by_response(&state, auth.user_id, "going", &params).await
+}
+
+/// GET /v1/events/interested — Current user's "interested" events.
+pub async fn interested_events(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(params): Query<PaginationParams>,
+) -> Result<Json<Value>, ApiError> {
+    list_my_events_by_response(&state, auth.user_id, "interested", &params).await
+}
+
+/// GET /v1/events/invited — Current user's pending invitations.
+pub async fn invited_events(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(params): Query<PaginationParams>,
+) -> Result<Json<Value>, ApiError> {
+    list_my_events_by_response(&state, auth.user_id, "invited", &params).await
+}
+
+/// GET /v1/events/past — Past events the user attended or created.
+pub async fn past_events(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(params): Query<PaginationParams>,
+) -> Result<Json<Value>, ApiError> {
+    let limit = params.limit();
+    let cursor = params.cursor_id();
+
+    let events = sqlx::query_as::<_, EventSummary>(
+        r#"
+        SELECT DISTINCT e.id, e.name, e.cover, e.start_at, e.end_at,
+            (SELECT COUNT(*) FROM event_responses WHERE event_id = e.id AND response = 'going') AS going_count
+        FROM events e
+        LEFT JOIN event_responses er ON er.event_id = e.id AND er.user_id = $1
+        WHERE e.end_at < NOW()
+          AND (e.creator_id = $1 OR er.response IN ('going', 'interested'))
+          AND ($2::bigint IS NULL OR e.id < $2)
+        ORDER BY e.end_at DESC LIMIT $3
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(cursor)
+    .bind(limit + 1)
+    .fetch_all(&state.db)
+    .await?;
+
+    let has_more = events.len() as i64 > limit;
+    let events: Vec<_> = events.into_iter().take(limit as usize).collect();
+
+    Ok(Json(json!({ "data": events, "meta": { "has_more": has_more } })))
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async fn verify_event_owner(state: &AppState, event_id: i64, user_id: i64) -> Result<(), ApiError> {

@@ -1,6 +1,33 @@
 # Jungle Backend — Rust Microservices
 
-Rewrite of the Jungle PHP social network backend into Rust microservices.
+Reescritura completa del backend de la red social Jungle (PHP) en **Rust**, con arquitectura de microservicios lista para producción.
+
+**519 endpoints · 15 servicios · 20 gateways de pago · 3 proveedores IA · 14 OAuth social**
+
+## 📚 Documentación Completa
+
+→ **[Ver documentación completa](./docs/README.md)**  
+→ **[Resumen ejecutivo del proyecto](./docs/OVERVIEW.md)**
+
+| Documento | Descripción |
+|-----------|-------------|
+| [Resumen Ejecutivo](./docs/OVERVIEW.md) | Qué incluye, números clave, todas las funcionalidades |
+| [Arquitectura](./docs/architecture.md) | Diagrama de servicios, stack tecnológico, flujo de requests |
+| [API Gateway](./docs/api-gateway.md) | Routing completo, rate limiting, WebSocket proxy |
+| [Configuración](./docs/configuration.md) | Variables de entorno, Docker, desarrollo local |
+| [Autenticación](./docs/auth.md) | JWT, 2FA TOTP, OAuth social (14 proveedores) |
+| [API Reference](./docs/api/) | Documentación de cada servicio (13 documentos) |
+| [Modelos de Datos](./docs/data-models.md) | Estructuras reales con ejemplos JSON |
+| [Internals](./docs/internals.md) | Algoritmos, transacciones, detalles de implementación |
+| [Event Bus](./docs/event-bus.md) | 28 eventos NATS, DLQ |
+| [Background Jobs](./docs/jobs.md) | 20 tareas en segundo plano |
+| [Payment Gateways](./docs/payment-gateways.md) | 20 proveedores de pago |
+| [Base de Datos](./docs/database.md) | 28 migraciones SQL, esquema |
+| [Observabilidad](./docs/observability.md) | Prometheus, OpenTelemetry |
+| [Resiliencia](./docs/resilience.md) | Circuit breaker, retry, DLQ |
+| [Migración MySQL→PG](./docs/migration.md) | Herramienta de migración desde PHP |
+
+> Swagger UI interactivo: `http://localhost:8080/swagger-ui`
 
 ## Architecture
 

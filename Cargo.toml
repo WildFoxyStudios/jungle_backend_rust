@@ -30,7 +30,7 @@ axum = { version = "0.8", features = ["macros", "multipart"] }
 axum-extra = { version = "0.10", features = ["typed-header", "cookie"] }
 tokio = { version = "1", features = ["full"] }
 tower = { version = "0.5", features = ["full"] }
-tower-http = { version = "0.6", features = ["cors", "trace", "limit"] }
+tower-http = { version = "0.6", features = ["cors", "trace", "limit", "fs"] }
 http = "1"
 
 # Database
@@ -79,7 +79,9 @@ regex = "1"
 sha1 = "0.10"
 md5 = "0.7"
 hmac = "0.12"
+aes-gcm = "0.10"
 base64 = "0.22"
+crc32fast = "1.4"
 ammonia = "4"
 serde_urlencoded = "0.7"
 urlencoding = "2"
@@ -88,10 +90,16 @@ futures = "0.3"
 prometheus = "0.13"
 lettre = { version = "0.11", features = ["tokio1-native-tls", "builder"] }
 image = "0.25"
-aws-sdk-s3 = "1"
+aws-sdk-s3 = { version = "1", features = ["behavior-version-latest"] }
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 utoipa = { version = "5", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "9", features = ["axum"] }
+
+# Observability — OpenTelemetry tracing
+opentelemetry = "0.27"
+opentelemetry_sdk = { version = "0.27", features = ["rt-tokio"] }
+opentelemetry-otlp = { version = "0.27", features = ["grpc-tonic", "trace"] }
+tracing-opentelemetry = "0.28"
 
 # Shared crate
 shared = { path = "crates/shared" }

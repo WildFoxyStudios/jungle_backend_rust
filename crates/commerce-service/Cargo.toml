@@ -20,3 +20,5 @@ tracing-subscriber = { workspace = true }
 validator = { workspace = true }
 redis = { workspace = true }
 rust_decimal = { workspace = true }
+# PDF generation for invoice download (uses PDF base-14 fonts, no embedding).
+lopdf = { version = "0.40", default-features = false }

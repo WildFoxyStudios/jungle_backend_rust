@@ -20,6 +20,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/blogs/category/{id}", get(handlers::extras::blogs_by_category))
         // ── Forums ──
         .route("/v1/forums/sections", get(handlers::forums::list_sections))
+        .route("/v1/forums/search", get(handlers::forums::search_threads))
+        .route("/v1/forums/members", get(handlers::forums::list_top_posters))
+        .route("/v1/forums/my/threads", get(handlers::forums::my_threads))
+        .route("/v1/forums/my/replies", get(handlers::forums::my_replies))
         .route("/v1/forums/{id}/threads", get(handlers::forums::list_threads).post(handlers::forums::create_thread))
         .route("/v1/forums/threads/{id}", get(handlers::forums::get_thread).put(handlers::forums::update_thread).delete(handlers::forums::delete_thread))
         .route("/v1/forums/threads/{id}/replies", get(handlers::forums::list_replies).post(handlers::forums::create_reply))
@@ -41,6 +45,8 @@ pub fn create_router(state: AppState) -> Router {
         // ── Public Custom Pages ──
         .route("/v1/pages/custom", get(handlers::extras::list_custom_pages))
         .route("/v1/pages/custom/{slug}", get(handlers::extras::get_custom_page))
+        // ── Emojis (public catalog) ──
+        .route("/v1/emojis", get(handlers::emojis::list_emojis))
         // ── Health ──
         .route("/health", get(handlers::health::health_check))
         .with_state(state)

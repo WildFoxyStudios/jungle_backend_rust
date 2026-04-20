@@ -198,19 +198,20 @@ pub async fn get_estimated_audience(
 
     let mut conditions = vec!["deleted_at IS NULL".to_string(), "is_active = TRUE".to_string()];
 
-    if let Some(ref gender) = params.gender {
-        if gender != "all" && !gender.is_empty() {
-            conditions.push(format!("gender = '{}'", gender.replace('\'', "")));
-        }
+    if let Some(ref gender) = params.gender
+        && gender != "all"
+        && !gender.is_empty()
+    {
+        conditions.push(format!("gender = '{}'", gender.replace('\'', "")));
     }
 
-    if let Some(ref country) = params.country {
-        if !country.is_empty() {
-            conditions.push(format!(
-                "country_id IN (SELECT id FROM categories WHERE slug = '{}' AND type = 'country' LIMIT 1)",
-                country.replace('\'', "")
-            ));
-        }
+    if let Some(ref country) = params.country
+        && !country.is_empty()
+    {
+        conditions.push(format!(
+            "country_id IN (SELECT id FROM categories WHERE slug = '{}' AND type = 'country' LIMIT 1)",
+            country.replace('\'', "")
+        ));
     }
 
     if let Some(min_age) = params.min_age {

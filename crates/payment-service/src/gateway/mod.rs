@@ -113,6 +113,9 @@ pub fn create_gateway(provider: &str) -> Result<Box<dyn PaymentGateway>, Payment
     match provider {
         "stripe" => Ok(Box::new(providers::stripe::StripeGateway::from_env())),
         "paypal" => Ok(Box::new(providers::paypal::PayPalGateway::from_env())),
+        "authorize_net" | "authorize" | "authorizenet" => {
+            Ok(Box::new(providers::authorize_net::AuthorizeNetGateway::from_env()))
+        }
         "paystack" => Ok(Box::new(providers::paystack::PayStackGateway::from_env())),
         "flutterwave" => Ok(Box::new(providers::flutterwave::FlutterwaveGateway::from_env())),
         "razorpay" => Ok(Box::new(providers::razorpay::RazorpayGateway::from_env())),

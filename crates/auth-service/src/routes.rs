@@ -31,6 +31,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/auth/2fa/backup-codes/regenerate", post(handlers::two_factor::regenerate_backup_codes))
         // ── Social login (14 providers) ──
         .route("/v1/auth/social/login", post(handlers::social::social_login))
+        .route("/v1/auth/social/set-password", post(handlers::password::set_social_password))
         // ── Switch Account ──
         .route("/v1/auth/switch-account", post(handlers::switch_account::switch_account))
         // ── Sessions ──

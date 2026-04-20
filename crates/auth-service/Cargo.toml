@@ -3,6 +3,11 @@ name = "auth-service"
 version.workspace = true
 edition.workspace = true
 
+[features]
+default = []
+# Enable integration tests against a running auth-service instance
+integration = []
+
 [dependencies]
 shared = { workspace = true }
 axum = { workspace = true }

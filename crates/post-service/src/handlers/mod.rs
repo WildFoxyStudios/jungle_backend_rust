@@ -6,6 +6,7 @@ pub mod feed;
 pub mod hashtags;
 pub mod health;
 pub mod live;
+pub mod post_xhr;
 pub mod posts;
 pub mod reactions;
 pub mod reels;

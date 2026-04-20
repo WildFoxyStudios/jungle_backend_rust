@@ -1240,23 +1240,23 @@ pub async fn get_general_data(
     }
 
     // Update device ID if provided
-    if let Some(ref android_id) = req.android_device_id {
-        if !android_id.trim().is_empty() {
-            let _ = sqlx::query("UPDATE users SET android_device_id = $1 WHERE id = $2")
-                .bind(android_id.trim())
-                .bind(auth.user_id)
-                .execute(&state.db)
-                .await;
-        }
+    if let Some(ref android_id) = req.android_device_id
+        && !android_id.trim().is_empty()
+    {
+        let _ = sqlx::query("UPDATE users SET android_device_id = $1 WHERE id = $2")
+            .bind(android_id.trim())
+            .bind(auth.user_id)
+            .execute(&state.db)
+            .await;
     }
-    if let Some(ref ios_id) = req.ios_device_id {
-        if !ios_id.trim().is_empty() {
-            let _ = sqlx::query("UPDATE users SET ios_device_id = $1 WHERE id = $2")
-                .bind(ios_id.trim())
-                .bind(auth.user_id)
-                .execute(&state.db)
-                .await;
-        }
+    if let Some(ref ios_id) = req.ios_device_id
+        && !ios_id.trim().is_empty()
+    {
+        let _ = sqlx::query("UPDATE users SET ios_device_id = $1 WHERE id = $2")
+            .bind(ios_id.trim())
+            .bind(auth.user_id)
+            .execute(&state.db)
+            .await;
     }
 
     let mut result = serde_json::Map::new();

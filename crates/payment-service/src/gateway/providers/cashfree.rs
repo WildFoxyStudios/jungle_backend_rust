@@ -68,10 +68,12 @@ impl PaymentGateway for CashfreeGateway {
 
         let result: serde_json::Value = resp.json().await?;
 
-        if let Some(msg) = result.get("message") {
-            if result.get("payment_session_id").is_none() {
-                return Err(PaymentError::ProviderError(msg.as_str().unwrap_or("Cashfree error").to_string()));
-            }
+        if let Some(msg) = result.get("message")
+            && result.get("payment_session_id").is_none()
+        {
+            return Err(PaymentError::ProviderError(
+                msg.as_str().unwrap_or("Cashfree error").to_string(),
+            ));
         }
 
         let session_id = result["payment_session_id"].as_str().unwrap_or("").to_string();

@@ -92,10 +92,12 @@ impl PaymentGateway for FortumoGateway {
                 .collect::<Vec<_>>()
                 .join("");
             let expected = format!("{:x}", md5::compute(format!("{}{}", sig_string, self.secret)));
-            if let Some(provided) = form.get("sig") {
-                if *provided != expected && !signature.is_empty() && signature != expected {
-                    return Err(PaymentError::InvalidSignature);
-                }
+            if let Some(provided) = form.get("sig")
+                && *provided != expected
+                && !signature.is_empty()
+                && signature != expected
+            {
+                return Err(PaymentError::InvalidSignature);
             }
         }
 

@@ -13,8 +13,10 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/users/me/avatar", put(handlers::profile::update_avatar))
         .route("/v1/users/me/cover", put(handlers::profile::update_cover))
         .route("/v1/users/{username}", get(handlers::profile::get_user))
+        .route("/v1/users/{username}/popover", get(handlers::profile::get_user_popover))
         // Search
         .route("/v1/users/search", get(handlers::search::search_users))
+        .route("/v1/users/search/professional", get(handlers::search::search_professionals))
         .route("/v1/users/suggestions", get(handlers::search::suggestions))
         .route("/v1/users/pro-users", get(handlers::extras::pro_users))
         // Social
@@ -109,6 +111,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/users/me/privacy", get(handlers::settings::get_privacy_settings).put(handlers::settings::update_privacy_settings))
         .route("/v1/users/me/notification-settings", get(handlers::settings::get_notification_settings).put(handlers::settings::update_notification_settings))
         .route("/v1/users/me/invite-code", get(handlers::settings::get_my_invite_code))
+        // Onboarding
+        .route("/v1/users/me/onboarding/skip", post(handlers::settings::onboarding_skip))
         // Verification
         .route("/v1/users/me/verification-request", post(handlers::extras::request_verification))
         // Health

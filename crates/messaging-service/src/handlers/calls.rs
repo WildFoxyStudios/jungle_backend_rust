@@ -227,21 +227,31 @@ pub async fn generate_agora_token(
             .await?;
     }
 
-    // Build a simple token payload — if no certificate, return a demo token
-    // For production with certificate, this would use proper Agora RtcTokenBuilder logic
-    let expire_ts = (time::OffsetDateTime::now_utc().unix_timestamp() + 36000) as u32;
+    // Token lifetime: 10 hours (36000 s). Client should request a new one on expiry.
+    const EXPIRE_SECS: u32 = 10 * 3600;
+    let expire_ts = (time::OffsetDateTime::now_utc().unix_timestamp() + EXPIRE_SECS as i64) as u32;
 
-    // In no-certificate mode (dev/test), return app_id + channel as token.
-    // In production with a certificate, the mobile client should generate the
-    // Agora RtcToken using the official Agora SDK (Swift/Kotlin/Flutter) directly.
-    // We return the required parameters for the client to build or use the token.
+    // Agora uses u32 UIDs. We clamp to avoid overflow on big user IDs.
+    let uid: u32 = (auth.user_id as u64 & 0xFFFF_FFFF) as u32;
+
+    // If an App Certificate is configured, produce a real HMAC-signed RTC token v006.
+    // Without a certificate, Agora accepts the raw app_id as a token (only for testing
+    // projects flagged as "App ID only" in the Agora console).
     let token = if app_cert.is_empty() {
-        // Simple dev token
-        format!("{}_{}", app_id, uuid::Uuid::new_v4().to_string().replace('-', ""))
+        tracing::warn!(
+            "Agora App Certificate not configured — returning App-ID-only token (insecure; test mode only)"
+        );
+        app_id.clone()
     } else {
-        // Return a placeholder; real Agora token requires the Agora server SDK
-        // The official approach is to use Agora's C++/Go server SDK or their cloud token server
-        format!("agora_token_{}_{}", req.channel_name.replace(' ', "_"), expire_ts)
+        crate::agora_token::build(
+            &app_id,
+            &app_cert,
+            req.channel_name.trim(),
+            uid,
+            crate::agora_token::Role::Publisher,
+            EXPIRE_SECS,
+        )
+        .map_err(|e| ApiError::Internal(format!("Agora token generation failed: {}", e)))?
     };
 
     Ok(Json(json!({
@@ -249,8 +259,82 @@ pub async fn generate_agora_token(
             "token": token,
             "app_id": app_id,
             "channel": req.channel_name,
-            "uid": auth.user_id,
+            "uid": uid,
             "expire_ts": expire_ts
+        }
+    })))
+}
+
+/// POST /v1/calls/viewer-token — Generate an Agora RTC **subscriber-only** token.
+///
+/// Use this for live-stream viewers and listen-only participants: the resulting
+/// token can join the channel and receive audio/video, but **cannot publish**.
+/// This is the proper way to scale Agora-based live broadcasts, as only the host
+/// publishes (1 publisher → many subscribers).
+#[derive(Debug, serde::Deserialize)]
+pub struct ViewerTokenRequest {
+    pub channel_name: String,
+}
+
+pub async fn generate_viewer_token(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<ViewerTokenRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if req.channel_name.trim().is_empty() {
+        return Err(ApiError::BadRequest("channel_name is required".into()));
+    }
+
+    let app_id: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM site_config WHERE category = 'agora' AND key = 'app_id'",
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten();
+
+    let app_certificate: Option<String> = sqlx::query_scalar(
+        "SELECT value FROM site_config WHERE category = 'agora' AND key = 'app_certificate'",
+    )
+    .fetch_optional(&state.db)
+    .await?
+    .flatten();
+
+    let app_id = app_id.as_deref().unwrap_or("").trim().to_string();
+    let app_cert = app_certificate.as_deref().unwrap_or("").trim().to_string();
+
+    if app_id.is_empty() {
+        return Err(ApiError::BadRequest("Agora is not configured".into()));
+    }
+
+    // Viewer tokens are short-lived (1 hour) — viewers can reconnect cheaply.
+    const EXPIRE_SECS: u32 = 3600;
+    let expire_ts = (time::OffsetDateTime::now_utc().unix_timestamp() + EXPIRE_SECS as i64) as u32;
+
+    let uid: u32 = (auth.user_id as u64 & 0xFFFF_FFFF) as u32;
+
+    let token = if app_cert.is_empty() {
+        tracing::warn!("Agora App Certificate not configured — returning App-ID-only viewer token");
+        app_id.clone()
+    } else {
+        crate::agora_token::build(
+            &app_id,
+            &app_cert,
+            req.channel_name.trim(),
+            uid,
+            crate::agora_token::Role::Subscriber,
+            EXPIRE_SECS,
+        )
+        .map_err(|e| ApiError::Internal(format!("Agora viewer token generation failed: {}", e)))?
+    };
+
+    Ok(Json(json!({
+        "data": {
+            "token": token,
+            "app_id": app_id,
+            "channel": req.channel_name,
+            "uid": uid,
+            "expire_ts": expire_ts,
+            "role": "subscriber"
         }
     })))
 }

@@ -418,3 +418,98 @@ pub async fn job_categories(
     let data: Vec<Value> = cats.into_iter().map(|(id, name)| json!({"id": id, "name": name})).collect();
     Ok(Json(json!({ "data": data })))
 }
+
+#[derive(Debug, Deserialize)]
+pub struct NearbyParams {
+    pub lat: f64,
+    pub lng: f64,
+    pub radius_km: Option<f64>,
+    pub cursor: Option<i64>,
+    pub limit: Option<i64>,
+}
+
+/// GET /v1/jobs/nearby — jobs within radius_km of (lat, lng).
+///
+/// Uses the haversine formula evaluated in SQL; avoids a PostGIS dependency.
+pub async fn nearby_jobs(
+    State(state): State<AppState>,
+    Query(params): Query<NearbyParams>,
+) -> Result<Json<Value>, ApiError> {
+    let radius_km = params.radius_km.unwrap_or(25.0).clamp(1.0, 500.0);
+    let limit = params.limit.unwrap_or(30).clamp(1, 100);
+
+    type Row = (
+        i64,
+        i64,
+        String,
+        Option<String>,
+        String,
+        f64,
+        f64,
+        String,
+        f64,
+        OffsetDateTime,
+    );
+
+    let rows: Vec<Row> = sqlx::query_as(
+        r#"
+        SELECT j.id, j.user_id, j.title, j.description, j.location,
+               j.lat, j.lng, j.job_type,
+               (6371 * acos(
+                   GREATEST(-1.0, LEAST(1.0,
+                     cos(radians($1)) * cos(radians(j.lat)) *
+                     cos(radians(j.lng) - radians($2)) +
+                     sin(radians($1)) * sin(radians(j.lat))
+                   ))
+               ))::double precision AS distance_km,
+               j.created_at
+          FROM jobs j
+         WHERE j.lat IS NOT NULL AND j.lng IS NOT NULL
+           AND j.status = 'open'
+           AND (6371 * acos(
+                   GREATEST(-1.0, LEAST(1.0,
+                     cos(radians($1)) * cos(radians(j.lat)) *
+                     cos(radians(j.lng) - radians($2)) +
+                     sin(radians($1)) * sin(radians(j.lat))
+                   ))
+           )) <= $3
+           AND ($4::bigint IS NULL OR j.id < $4)
+        ORDER BY distance_km ASC, j.id DESC
+        LIMIT $5
+        "#,
+    )
+    .bind(params.lat)
+    .bind(params.lng)
+    .bind(radius_km)
+    .bind(params.cursor)
+    .bind(limit + 1)
+    .fetch_all(&state.db)
+    .await?;
+
+    let has_more = rows.len() as i64 > limit;
+    let rows: Vec<Row> = rows.into_iter().take(limit as usize).collect();
+    let next_cursor = rows.last().map(|r| r.0);
+
+    let data: Vec<Value> = rows
+        .into_iter()
+        .map(|(id, uid, title, desc, loc, lat, lng, jtype, dist, created)| {
+            json!({
+                "id": id,
+                "user_id": uid,
+                "title": title,
+                "description": desc,
+                "location": loc,
+                "lat": lat,
+                "lng": lng,
+                "job_type": jtype,
+                "distance_km": dist,
+                "created_at": created.to_string(),
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "data": data,
+        "meta": { "has_more": has_more, "next_cursor": next_cursor }
+    })))
+}

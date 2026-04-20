@@ -25,7 +25,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/admin/reports/{id}/dismiss", post(handlers::reports::dismiss_report))
         // ── Config ──
         .route("/v1/admin/config", get(handlers::config::list_config).put(handlers::config::update_config))
-        .route("/v1/admin/config/{category}", get(handlers::config::get_category))
+        .route("/v1/admin/config/catalog", get(handlers::config_catalog::get_catalog))
+        .route(
+            "/v1/admin/config/{category}",
+            get(handlers::config::get_category).put(handlers::config::update_category),
+        )
         // ── Categories ──
         .route("/v1/admin/categories", get(handlers::categories::list_categories).post(handlers::categories::create_category))
         .route("/v1/admin/categories/{id}", put(handlers::categories::update_category).delete(handlers::categories::delete_category))
@@ -53,6 +57,8 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/admin/payments/withdrawals/{id}/approve", post(handlers::payments_admin::approve_withdrawal))
         .route("/v1/admin/payments/withdrawals/{id}/reject", post(handlers::payments_admin::reject_withdrawal))
         .route("/v1/admin/payments/pro-plans", get(handlers::payments_admin::list_pro_plans).post(handlers::payments_admin::upsert_pro_plan))
+        // ── Payment Requests (dedicated endpoint with stats) ──
+        .route("/v1/admin/payment-requests", get(handlers::payments_admin::list_payment_requests))
         // ── Banned IPs ──
         .route("/v1/admin/banned-ips", get(handlers::banned_ips::list_banned_ips).post(handlers::banned_ips::ban_ip))
         .route("/v1/admin/banned-ips/{id}", delete(handlers::banned_ips::unban_ip))
@@ -116,6 +122,18 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/admin/stickers/{id}", delete(handlers::gifts_stickers::delete_sticker))
         // ── Activity Log ──
         .route("/v1/admin/activities", get(handlers::activity_log::list_activities))
+        // ── Audit Log (every admin mutation) ──
+        .route("/v1/admin/audit-log", get(handlers::audit_dlq::list_audit_log))
+        // ── Dead Letter Queue (failed events) ──
+        .route("/v1/admin/events/dlq", get(handlers::audit_dlq::list_dlq))
+        .route("/v1/admin/events/dlq/{id}", delete(handlers::audit_dlq::discard_dlq_item))
+        .route("/v1/admin/events/dlq/{id}/retry", post(handlers::audit_dlq::retry_dlq_item))
+        // ── Storage providers (S3/R2/MinIO/...) ──
+        .route("/v1/admin/storage/config", get(handlers::storage_and_perms::list_storage).post(handlers::storage_and_perms::create_storage))
+        .route("/v1/admin/storage/config/{id}", axum::routing::patch(handlers::storage_and_perms::update_storage).delete(handlers::storage_and_perms::delete_storage))
+        .route("/v1/admin/storage/config/{id}/test", post(handlers::storage_and_perms::test_storage))
+        // ── Permissions catalog (static list of granular admin actions) ──
+        .route("/v1/admin/permissions/catalog", get(handlers::storage_and_perms::permissions_catalog))
         // ── Invitations ──
         .route("/v1/admin/invitations", get(handlers::invitations::list_invitations).post(handlers::invitations::create_invitation))
         .route("/v1/admin/invitations/{id}", delete(handlers::invitations::delete_invitation))
@@ -231,6 +249,20 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/admin/monetization", get(handlers::advanced_settings::list_monetization_subscriptions))
         // ── Dynamic Settings by Category ──
         .route("/v1/admin/settings/{category}", get(handlers::advanced_settings::get_settings_category).put(handlers::advanced_settings::update_settings_category))
+        // ── Live streams (moderation + analytics) ──
+        .route("/v1/admin/live-streams", get(handlers::live_and_email::list_live_streams))
+        .route("/v1/admin/live-streams/{id}", delete(handlers::live_and_email::force_end_live_stream))
+        .route("/v1/admin/live/stats", get(handlers::live_and_email::live_stats))
+        // ── Realtime platform stats (websocket + active sessions) ──
+        .route("/v1/admin/realtime/stats", get(handlers::realtime::realtime_stats))
+        // ── Bulk email campaigns ──
+        .route("/v1/admin/email-campaigns", post(handlers::live_and_email::create_email_campaign))
+        // ── Changelog (migrations history) ──
+        .route("/v1/admin/changelog", get(handlers::live_and_email::list_changelog))
+        // ── Cronjobs status + config ──
+        .route("/v1/admin/cronjobs/status", get(handlers::live_and_email::cronjobs_status))
+        .route("/v1/admin/cronjob-config", get(handlers::live_and_email::list_cronjob_config))
+        .route("/v1/admin/cronjob-config/{name}", put(handlers::live_and_email::update_cronjob_config))
         // ── Health ──
         .route("/v1/admin/health", get(handlers::health::admin_health))
         .route("/health", get(handlers::health::health_check))

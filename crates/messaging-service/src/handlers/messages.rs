@@ -560,3 +560,119 @@ async fn get_message_conversation(state: &AppState, message_id: i64) -> Result<i
     .await?
     .ok_or_else(|| ApiError::NotFound("Message not found".into()))
 }
+
+// ─── Listing endpoints (favorites / pinned) ─────────────────────────────────
+
+#[derive(Debug, Deserialize)]
+pub struct FavoritesQuery {
+    #[serde(flatten)]
+    pub pagination: PaginationParams,
+    pub conversation_id: Option<i64>,
+}
+
+/// GET /v1/messages/favorites — list all messages I've marked as favorite
+/// Optional `conversation_id` scopes the list to a single thread.
+/// PHP parity: `api/get_fav_messages` (chat_id optional).
+pub async fn list_favorite_messages(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Query(params): Query<FavoritesQuery>,
+) -> Result<Json<Value>, ApiError> {
+    let limit = params.pagination.limit();
+    let cursor = params.pagination.cursor_id();
+
+    if let Some(cid) = params.conversation_id {
+        verify_membership(&state, cid, auth.user_id).await?;
+    }
+
+    let messages = sqlx::query_as::<_, MessageWithSender>(
+        r#"
+        SELECT
+            m.id, m.conversation_id, m.sender_id,
+            u.username  AS sender_username,
+            u.first_name AS sender_first_name,
+            u.last_name  AS sender_last_name,
+            u.avatar     AS sender_avatar,
+            m.content, m.message_type, m.media,
+            m.reply_to_id, m.forwarded_from,
+            m.is_pinned, m.is_favorited, m.created_at
+        FROM messages m
+        JOIN users u ON u.id = m.sender_id
+        JOIN conversation_members cm
+          ON cm.conversation_id = m.conversation_id
+         AND cm.user_id = $1
+         AND cm.is_active = TRUE
+        WHERE m.is_favorited = TRUE
+          AND m.deleted_at IS NULL
+          AND ($2::bigint IS NULL OR m.conversation_id = $2)
+          AND ($3::bigint IS NULL OR m.id < $3)
+        ORDER BY m.id DESC
+        LIMIT $4
+        "#,
+    )
+    .bind(auth.user_id)
+    .bind(params.conversation_id)
+    .bind(cursor)
+    .bind(limit + 1)
+    .fetch_all(&state.db)
+    .await?;
+
+    let has_more = messages.len() as i64 > limit;
+    let messages: Vec<_> = messages.into_iter().take(limit as usize).collect();
+    let next_cursor = messages.last().map(|m| m.id.to_string());
+
+    Ok(Json(json!({
+        "data": messages,
+        "meta": { "cursor": next_cursor, "has_more": has_more }
+    })))
+}
+
+/// GET /v1/conversations/{id}/pinned-messages — list all pinned messages in a thread
+/// PHP parity: `api/get_pin_message`.
+pub async fn list_pinned_messages(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(conversation_id): Path<i64>,
+    Query(params): Query<PaginationParams>,
+) -> Result<Json<Value>, ApiError> {
+    verify_membership(&state, conversation_id, auth.user_id).await?;
+
+    let limit = params.limit();
+    let cursor = params.cursor_id();
+
+    let messages = sqlx::query_as::<_, MessageWithSender>(
+        r#"
+        SELECT
+            m.id, m.conversation_id, m.sender_id,
+            u.username  AS sender_username,
+            u.first_name AS sender_first_name,
+            u.last_name  AS sender_last_name,
+            u.avatar     AS sender_avatar,
+            m.content, m.message_type, m.media,
+            m.reply_to_id, m.forwarded_from,
+            m.is_pinned, m.is_favorited, m.created_at
+        FROM messages m
+        JOIN users u ON u.id = m.sender_id
+        WHERE m.conversation_id = $1
+          AND m.is_pinned = TRUE
+          AND m.deleted_at IS NULL
+          AND ($2::bigint IS NULL OR m.id < $2)
+        ORDER BY m.id DESC
+        LIMIT $3
+        "#,
+    )
+    .bind(conversation_id)
+    .bind(cursor)
+    .bind(limit + 1)
+    .fetch_all(&state.db)
+    .await?;
+
+    let has_more = messages.len() as i64 > limit;
+    let messages: Vec<_> = messages.into_iter().take(limit as usize).collect();
+    let next_cursor = messages.last().map(|m| m.id.to_string());
+
+    Ok(Json(json!({
+        "data": messages,
+        "meta": { "cursor": next_cursor, "has_more": has_more }
+    })))
+}

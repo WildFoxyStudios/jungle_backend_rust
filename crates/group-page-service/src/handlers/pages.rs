@@ -484,6 +484,119 @@ pub async fn liked_pages(
     Ok(Json(json!({ "data": pages })))
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Nearby pages (friends_nearby, nearby_business, nearby_shops)
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, Deserialize)]
+pub struct NearbyPagesQuery {
+    pub lat: f64,
+    pub lng: f64,
+    /// Search radius in kilometres (default 25, max 500).
+    pub radius_km: Option<f64>,
+    /// Optional category slug or id to filter (e.g. `business`, `shops`).
+    pub category: Option<String>,
+    pub limit: Option<i64>,
+}
+
+#[derive(Debug, Serialize, FromRow)]
+pub struct NearbyPageRow {
+    pub id: i64,
+    pub page_name: String,
+    pub page_title: String,
+    pub avatar: String,
+    pub cover: String,
+    pub about: String,
+    pub category_id: Option<i64>,
+    pub address: String,
+    pub is_verified: bool,
+    pub like_count: i32,
+    pub lat: Option<f64>,
+    pub lng: Option<f64>,
+    pub distance_km: f64,
+}
+
+/// GET /v1/pages/nearby?lat=&lng=&radius_km=&category=
+///
+/// Haversine distance in SQL. Pages without lat/lng are excluded.
+/// Equivalent to PHP's `nearby_business.php` + `nearby_shops.php` when a
+/// `category` filter is supplied.
+pub async fn nearby_pages(
+    State(state): State<AppState>,
+    _auth: AuthUser,
+    Query(q): Query<NearbyPagesQuery>,
+) -> Result<Json<Value>, ApiError> {
+    if !(-90.0..=90.0).contains(&q.lat) || !(-180.0..=180.0).contains(&q.lng) {
+        return Err(ApiError::BadRequest("lat/lng out of range".into()));
+    }
+
+    let radius = q.radius_km.unwrap_or(25.0).clamp(0.1, 500.0);
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+
+    // Resolve category identifier flexibly: accept slug, name_key, or numeric id.
+    let category_id: Option<i64> = if let Some(cat) = q.category.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        if let Ok(id) = cat.parse::<i64>() {
+            Some(id)
+        } else {
+            sqlx::query_scalar::<_, i64>(
+                r#"SELECT id FROM categories
+                    WHERE type = 'page'
+                      AND (LOWER(slug) = LOWER($1) OR LOWER(name_key) = LOWER($1))
+                    LIMIT 1"#,
+            )
+            .bind(cat)
+            .fetch_optional(&state.db)
+            .await?
+        }
+    } else {
+        None
+    };
+
+    let rows = sqlx::query_as::<_, NearbyPageRow>(
+        r#"
+        SELECT * FROM (
+            SELECT  p.id,
+                    p.page_name,
+                    p.page_title,
+                    p.avatar,
+                    p.cover,
+                    p.about,
+                    p.category_id,
+                    p.address,
+                    p.is_verified,
+                    p.like_count,
+                    p.lat,
+                    p.lng,
+                    -- Haversine (km). Earth radius 6371.
+                    (6371.0 * 2.0 * ASIN(SQRT(
+                        POWER(SIN(RADIANS(p.lat - $1) / 2.0), 2)
+                      + COS(RADIANS($1)) * COS(RADIANS(p.lat))
+                      * POWER(SIN(RADIANS(p.lng - $2) / 2.0), 2)
+                    )))::double precision AS distance_km
+              FROM pages p
+             WHERE p.active = TRUE
+               AND p.lat IS NOT NULL AND p.lng IS NOT NULL
+               AND ($4::bigint IS NULL OR p.category_id = $4)
+        ) geo
+        WHERE distance_km <= $3
+        ORDER BY distance_km ASC
+        LIMIT $5
+        "#,
+    )
+    .bind(q.lat)
+    .bind(q.lng)
+    .bind(radius)
+    .bind(category_id)
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(json!({
+        "data": rows,
+        "meta": { "lat": q.lat, "lng": q.lng, "radius_km": radius, "category_id": category_id }
+    })))
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 async fn verify_page_admin(state: &AppState, page_id: i64, user_id: i64) -> Result<(), ApiError> {

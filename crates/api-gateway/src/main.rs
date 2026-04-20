@@ -8,16 +8,10 @@ use shared::config::AppConfig;
 use std::sync::Arc;
 use http::{header, Method};
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
-        ))
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    shared::telemetry::init("api-gateway");
 
     let config = Arc::new(AppConfig::from_env());
 
@@ -54,7 +48,11 @@ async fn main() {
     let rate_limiter = rate_limit::RateLimiter::new(redis_conn);
 
     let state = proxy::GatewayState {
-        client: reqwest::Client::new(),
+        client: reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(300))
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .build()
+            .expect("reqwest client"),
         services: Arc::new(service_map),
         rate_limiter: Arc::new(rate_limiter),
     };

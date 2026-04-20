@@ -292,80 +292,6 @@ fn get_i32(map: &HashMap<String, HashMap<String, String>>, cat: &str, key: &str,
         .unwrap_or(default)
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_site_config_default_general() {
-        let cfg = SiteConfig::default();
-        assert_eq!(cfg.general.site_name, "Jungle");
-        assert!(!cfg.general.maintenance_mode);
-        assert_eq!(cfg.general.timezone, "UTC");
-    }
-
-    #[test]
-    fn test_site_config_default_features_all_enabled() {
-        let cfg = SiteConfig::default();
-        assert!(cfg.features.groups);
-        assert!(cfg.features.pages);
-        assert!(cfg.features.events);
-        assert!(cfg.features.blogs);
-        assert!(cfg.features.stories);
-        assert!(cfg.features.reels);
-        assert!(!cfg.features.post_approval);
-        assert!(!cfg.features.ai_system);
-    }
-
-    #[test]
-    fn test_site_config_default_limits() {
-        let cfg = SiteConfig::default();
-        assert_eq!(cfg.limits.max_characters, 63206);
-        assert_eq!(cfg.limits.max_multi_images, 10);
-        assert_eq!(cfg.limits.post_limit, 0);
-    }
-
-    #[test]
-    fn test_get_str_with_value() {
-        let mut map = HashMap::new();
-        let mut inner = HashMap::new();
-        inner.insert("key1".to_string(), "value1".to_string());
-        map.insert("cat".to_string(), inner);
-        assert_eq!(get_str(&map, "cat", "key1", "default"), "value1");
-    }
-
-    #[test]
-    fn test_get_str_missing_returns_default() {
-        let map: HashMap<String, HashMap<String, String>> = HashMap::new();
-        assert_eq!(get_str(&map, "cat", "key1", "fallback"), "fallback");
-    }
-
-    #[test]
-    fn test_get_bool_true_values() {
-        let mut map = HashMap::new();
-        let mut inner = HashMap::new();
-        inner.insert("a".to_string(), "1".to_string());
-        inner.insert("b".to_string(), "true".to_string());
-        inner.insert("c".to_string(), "yes".to_string());
-        inner.insert("d".to_string(), "no".to_string());
-        map.insert("cat".to_string(), inner);
-        assert!(get_bool(&map, "cat", "a", false));
-        assert!(get_bool(&map, "cat", "b", false));
-        assert!(get_bool(&map, "cat", "c", false));
-        assert!(!get_bool(&map, "cat", "d", true));
-    }
-
-    #[test]
-    fn test_get_i64_parses() {
-        let mut map = HashMap::new();
-        let mut inner = HashMap::new();
-        inner.insert("count".to_string(), "42".to_string());
-        map.insert("cat".to_string(), inner);
-        assert_eq!(get_i64(&map, "cat", "count", 0), 42);
-        assert_eq!(get_i64(&map, "cat", "missing", 99), 99);
-    }
-}
-
 /// Load the full site configuration from the database
 pub async fn load_config(db: &PgPool) -> Result<SiteConfig, sqlx::Error> {
     let rows = sqlx::query_as::<_, (String, String, String)>(
@@ -492,4 +418,78 @@ pub async fn load_config(db: &PgPool) -> Result<SiteConfig, sqlx::Error> {
             robots_txt: get_str(&map, "seo", "robots_txt", "User-agent: *\nAllow: /"),
         },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_site_config_default_general() {
+        let cfg = SiteConfig::default();
+        assert_eq!(cfg.general.site_name, "Jungle");
+        assert!(!cfg.general.maintenance_mode);
+        assert_eq!(cfg.general.timezone, "UTC");
+    }
+
+    #[test]
+    fn test_site_config_default_features_all_enabled() {
+        let cfg = SiteConfig::default();
+        assert!(cfg.features.groups);
+        assert!(cfg.features.pages);
+        assert!(cfg.features.events);
+        assert!(cfg.features.blogs);
+        assert!(cfg.features.stories);
+        assert!(cfg.features.reels);
+        assert!(!cfg.features.post_approval);
+        assert!(!cfg.features.ai_system);
+    }
+
+    #[test]
+    fn test_site_config_default_limits() {
+        let cfg = SiteConfig::default();
+        assert_eq!(cfg.limits.max_characters, 63206);
+        assert_eq!(cfg.limits.max_multi_images, 10);
+        assert_eq!(cfg.limits.post_limit, 0);
+    }
+
+    #[test]
+    fn test_get_str_with_value() {
+        let mut map = HashMap::new();
+        let mut inner = HashMap::new();
+        inner.insert("key1".to_string(), "value1".to_string());
+        map.insert("cat".to_string(), inner);
+        assert_eq!(get_str(&map, "cat", "key1", "default"), "value1");
+    }
+
+    #[test]
+    fn test_get_str_missing_returns_default() {
+        let map: HashMap<String, HashMap<String, String>> = HashMap::new();
+        assert_eq!(get_str(&map, "cat", "key1", "fallback"), "fallback");
+    }
+
+    #[test]
+    fn test_get_bool_true_values() {
+        let mut map = HashMap::new();
+        let mut inner = HashMap::new();
+        inner.insert("a".to_string(), "1".to_string());
+        inner.insert("b".to_string(), "true".to_string());
+        inner.insert("c".to_string(), "yes".to_string());
+        inner.insert("d".to_string(), "no".to_string());
+        map.insert("cat".to_string(), inner);
+        assert!(get_bool(&map, "cat", "a", false));
+        assert!(get_bool(&map, "cat", "b", false));
+        assert!(get_bool(&map, "cat", "c", false));
+        assert!(!get_bool(&map, "cat", "d", true));
+    }
+
+    #[test]
+    fn test_get_i64_parses() {
+        let mut map = HashMap::new();
+        let mut inner = HashMap::new();
+        inner.insert("count".to_string(), "42".to_string());
+        map.insert("cat".to_string(), inner);
+        assert_eq!(get_i64(&map, "cat", "count", 0), 42);
+        assert_eq!(get_i64(&map, "cat", "missing", 99), 99);
+    }
 }

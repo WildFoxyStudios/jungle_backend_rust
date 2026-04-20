@@ -180,7 +180,11 @@ pub async fn get_app_permissions(
     Ok(Json(json!({ "data": perms })))
 }
 
-/// POST /v1/oauth/authorize — authorize an OAuth app (simplified)
+/// POST /v1/oauth/authorize — authorize an OAuth app (simplified).
+///
+/// Accepts an opaque `state` param that the client generates. It is persisted
+/// alongside the auth code and echoed on token exchange to prevent CSRF attacks
+/// (OAuth 2 spec §10.12).
 pub async fn authorize(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -195,20 +199,31 @@ pub async fn authorize(
     .await?
     .ok_or(ApiError::NotFound("OAuth app not found".into()))?;
 
+    // Validate state parameter shape if provided (prevent oversized/crafted payloads)
+    if let Some(s) = req.state.as_deref()
+        && (s.len() > 128
+            || !s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'))
+    {
+        return Err(ApiError::BadRequest(
+            "state must be ≤128 chars of [A-Za-z0-9-_.]".into(),
+        ));
+    }
+
     // Generate auth code
     let code = Uuid::new_v4().to_string();
 
     let scope = req.scope.as_deref().unwrap_or("read");
 
     sqlx::query(
-        r#"INSERT INTO oauth_codes (app_id, user_id, code, redirect_uri, scope, expires_at)
-           VALUES ($1, $2, $3, $4, $5, NOW() + INTERVAL '10 minutes')"#,
+        r#"INSERT INTO oauth_codes (app_id, user_id, code, redirect_uri, scope, state, expires_at)
+           VALUES ($1, $2, $3, $4, $5, $6, NOW() + INTERVAL '10 minutes')"#,
     )
     .bind(app.0)
     .bind(auth.user_id)
     .bind(&code)
     .bind(&app.1)
     .bind(scope)
+    .bind(&req.state)
     .execute(&state.db)
     .await?;
 
@@ -217,6 +232,7 @@ pub async fn authorize(
             "code": code,
             "redirect_uri": app.1,
             "scope": scope,
+            "state": req.state,
         }
     })))
 }
@@ -225,32 +241,54 @@ pub async fn authorize(
 pub struct AuthorizeRequest {
     pub client_id: Uuid,
     pub scope: Option<String>,
+    /// Opaque client-generated value bound to the auth code to prevent CSRF.
+    pub state: Option<String>,
 }
 
-/// POST /v1/oauth/token — exchange auth code for access token
+/// POST /v1/oauth/token — exchange auth code for access token.
+///
+/// The caller must present (a) the authorization code, (b) the app's
+/// client_secret, and (c) the original `state` that was passed to `authorize`
+/// (only if the authorize call included one). This prevents CSRF replay.
 pub async fn exchange_token(
     State(state): State<AppState>,
     Json(req): Json<TokenExchangeRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // Validate code
-    let code_row = sqlx::query_as::<_, (i64, i64)>(
-        r#"SELECT app_id, user_id FROM oauth_codes
+    // Validate code (expires_at > NOW()). Retrieve the bound state alongside.
+    let code_row: Option<(i64, i64, Option<String>)> = sqlx::query_as(
+        r#"SELECT app_id, user_id, state FROM oauth_codes
            WHERE code = $1 AND expires_at > NOW()"#,
     )
     .bind(&req.code)
     .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::BadRequest("Invalid or expired code".into()))?;
+    .await?;
 
-    // Verify client_secret
+    let (app_id, user_id, stored_state) =
+        code_row.ok_or(ApiError::BadRequest("Invalid or expired code".into()))?;
+
+    // CSRF check: if the code was issued with a state, the client must echo it.
+    if let Some(expected) = stored_state.as_deref() {
+        match req.state.as_deref() {
+            Some(provided) if provided == expected => {}
+            _ => {
+                tracing::warn!(
+                    app_id,
+                    user_id,
+                    "OAuth token exchange rejected — state mismatch (possible CSRF)"
+                );
+                return Err(ApiError::Forbidden("state mismatch".into()));
+            }
+        }
+    }
+
+    // Verify client_secret — propagate DB errors instead of silently returning false.
     let valid: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM oauth_apps WHERE id = $1 AND client_secret = $2)",
     )
-    .bind(code_row.0)
+    .bind(app_id)
     .bind(&req.client_secret)
     .fetch_one(&state.db)
-    .await
-    .unwrap_or(false);
+    .await?;
 
     if !valid {
         return Err(ApiError::Unauthorized);
@@ -263,13 +301,13 @@ pub async fn exchange_token(
         r#"INSERT INTO oauth_tokens (app_id, user_id, access_token, expires_at)
            VALUES ($1, $2, $3, NOW() + INTERVAL '30 days')"#,
     )
-    .bind(code_row.0)
-    .bind(code_row.1)
+    .bind(app_id)
+    .bind(user_id)
     .bind(&access_token)
     .execute(&state.db)
     .await?;
 
-    // Delete used code
+    // Delete used code (single-use).
     sqlx::query("DELETE FROM oauth_codes WHERE code = $1")
         .bind(&req.code)
         .execute(&state.db)
@@ -288,6 +326,8 @@ pub async fn exchange_token(
 pub struct TokenExchangeRequest {
     pub code: String,
     pub client_secret: String,
+    /// Must match the `state` sent to `authorize` (OAuth 2 §10.12 CSRF protection).
+    pub state: Option<String>,
 }
 
 /// POST /v1/oauth/revoke — revoke an OAuth token

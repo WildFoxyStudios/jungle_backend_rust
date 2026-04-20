@@ -106,6 +106,12 @@ impl DomainEvent {
 pub trait EventBus: Send + Sync {
     async fn publish(&self, event: &DomainEvent) -> Result<(), EventBusError>;
     async fn subscribe(&self, subject: &str) -> Result<EventSubscription, EventBusError>;
+
+    /// Publish an already-serialized payload on a raw subject. Used by the DLQ
+    /// admin retry endpoint to resurrect a failed event on its original subject
+    /// without re-parsing it into a `DomainEvent` (and thus tolerating schema
+    /// drift between producers and consumers).
+    async fn publish_raw(&self, subject: &str, payload: &[u8]) -> Result<(), EventBusError>;
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -198,6 +204,13 @@ impl EventBus for NatsEventBus {
             .map_err(|e| EventBusError::Subscribe(e.to_string()))?;
         Ok(EventSubscription { inner: subscriber })
     }
+
+    async fn publish_raw(&self, subject: &str, payload: &[u8]) -> Result<(), EventBusError> {
+        self.client
+            .publish(subject.to_owned(), payload.to_vec().into())
+            .await
+            .map_err(|e| EventBusError::Publish(e.to_string()))
+    }
 }
 
 /// No-op event bus for tests or when NATS is not configured.
@@ -211,5 +224,8 @@ impl EventBus for NoopEventBus {
     }
     async fn subscribe(&self, _subject: &str) -> Result<EventSubscription, EventBusError> {
         Err(EventBusError::Connection("NoopEventBus does not support subscriptions".into()))
+    }
+    async fn publish_raw(&self, _subject: &str, _payload: &[u8]) -> Result<(), EventBusError> {
+        Ok(())
     }
 }

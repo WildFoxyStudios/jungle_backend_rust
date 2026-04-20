@@ -153,10 +153,10 @@ impl PaymentGateway for PayFastGateway {
         sorted_params.sort_by(|a, b| a.0.cmp(&b.0));
 
         let expected_sig = self.generate_signature(&sorted_params);
-        if let Some(provided_sig) = form.get("signature") {
-            if *provided_sig != expected_sig {
-                return Err(PaymentError::InvalidSignature);
-            }
+        if let Some(provided_sig) = form.get("signature")
+            && *provided_sig != expected_sig
+        {
+            return Err(PaymentError::InvalidSignature);
         }
 
         let status = match form.get("payment_status").map(|s| s.as_str()) {

@@ -132,12 +132,11 @@ impl PaymentGateway for CoinPaymentsGateway {
             .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         // Verify the IPN merchant matches our configured merchant_id
-        if !self.merchant_id.is_empty() {
-            if let Some(ipn_merchant) = form.get("merchant") {
-                if *ipn_merchant != self.merchant_id {
-                    return Err(PaymentError::InvalidSignature);
-                }
-            }
+        if !self.merchant_id.is_empty()
+            && let Some(ipn_merchant) = form.get("merchant")
+            && *ipn_merchant != self.merchant_id
+        {
+            return Err(PaymentError::InvalidSignature);
         }
 
         let status_code: i64 = form.get("status").and_then(|s| s.parse().ok()).unwrap_or(-1);

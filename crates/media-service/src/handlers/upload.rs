@@ -223,29 +223,28 @@ pub async fn upload_avatar(
 
     let ext = mime_to_ext(&content_type);
     let unique_name = format!("avatars/{}/{}.{}", auth.user_id, uuid::Uuid::new_v4(), ext);
-    let file_url = format!("/uploads/{}", unique_name);
 
-    let upload_dir = format!("uploads/avatars/{}", auth.user_id);
-    tokio::fs::create_dir_all(&upload_dir).await.ok();
-    tokio::fs::write(&format!("uploads/{}", unique_name), &data).await.map_err(|e| {
-        tracing::error!("Failed to write avatar: {}", e);
-        ApiError::Internal("File write error".into())
-    })?;
+    let upload_data = if let Ok(result) = crate::processing::resize_image(&data, 500, 500) {
+        result.data
+    } else {
+        data.clone()
+    };
 
-    // Update user avatar
+    let storage = shared::storage::create_storage().await;
+    let file_url = storage.upload(&unique_name, &upload_data, &content_type).await?;
+
     sqlx::query("UPDATE users SET avatar = $1, updated_at = NOW() WHERE id = $2")
         .bind(&file_url)
         .bind(auth.user_id)
         .execute(&state.db)
         .await?;
 
-    // Track in uploaded_media
     sqlx::query(
         "INSERT INTO uploaded_media (user_id, file_url, file_type, file_name, file_size, mime_type) VALUES ($1, $2, 'image', 'avatar', $3, $4)",
     )
     .bind(auth.user_id)
     .bind(&file_url)
-    .bind(data.len() as i64)
+    .bind(upload_data.len() as i64)
     .bind(&content_type)
     .execute(&state.db)
     .await?;
@@ -293,14 +292,15 @@ pub async fn upload_cover(
 
     let ext = mime_to_ext(&content_type);
     let unique_name = format!("covers/{}/{}.{}", auth.user_id, uuid::Uuid::new_v4(), ext);
-    let file_url = format!("/uploads/{}", unique_name);
 
-    let upload_dir = format!("uploads/covers/{}", auth.user_id);
-    tokio::fs::create_dir_all(&upload_dir).await.ok();
-    tokio::fs::write(&format!("uploads/{}", unique_name), &data).await.map_err(|e| {
-        tracing::error!("Failed to write cover: {}", e);
-        ApiError::Internal("File write error".into())
-    })?;
+    let upload_data = if let Ok(result) = crate::processing::resize_image(&data, 1920, 1080) {
+        result.data
+    } else {
+        data.clone()
+    };
+
+    let storage = shared::storage::create_storage().await;
+    let file_url = storage.upload(&unique_name, &upload_data, &content_type).await?;
 
     sqlx::query("UPDATE users SET cover = $1, updated_at = NOW() WHERE id = $2")
         .bind(&file_url)
@@ -313,7 +313,7 @@ pub async fn upload_cover(
     )
     .bind(auth.user_id)
     .bind(&file_url)
-    .bind(data.len() as i64)
+    .bind(upload_data.len() as i64)
     .bind(&content_type)
     .execute(&state.db)
     .await?;

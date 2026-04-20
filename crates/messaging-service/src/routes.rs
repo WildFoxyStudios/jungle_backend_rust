@@ -23,6 +23,10 @@ pub fn create_router(state: AppState) -> Router {
         // Messages
         .route("/v1/conversations/{id}/messages", get(handlers::messages::list_messages).post(handlers::messages::send_message))
         .route("/v1/conversations/{id}/typing", post(handlers::messages::typing_indicator))
+        .route("/v1/conversations/{id}/pinned-messages", get(handlers::messages::list_pinned_messages))
+        .route("/v1/conversations/{id}/search", get(handlers::conversations::search_messages))
+        .route("/v1/conversations/{id}/media", get(handlers::conversations::list_conversation_media))
+        .route("/v1/messages/favorites", get(handlers::messages::list_favorite_messages))
         .route("/v1/messages/{id}", delete(handlers::messages::delete_message))
         .route("/v1/messages/{id}/favorite", post(handlers::messages::toggle_favorite))
         .route("/v1/messages/{id}/pin", post(handlers::messages::pin_message).delete(handlers::messages::unpin_message))
@@ -38,6 +42,7 @@ pub fn create_router(state: AppState) -> Router {
         // Calls
         .route("/v1/calls", get(handlers::calls::list_calls).post(handlers::calls::create_call))
         .route("/v1/calls/agora-token", post(handlers::calls::generate_agora_token))
+        .route("/v1/calls/viewer-token", post(handlers::calls::generate_viewer_token))
         .route("/v1/calls/{id}", get(handlers::calls::get_call))
         .route("/v1/calls/{id}/status", put(handlers::calls::update_call_status))
         // Health

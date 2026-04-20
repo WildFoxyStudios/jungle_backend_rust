@@ -286,7 +286,7 @@ pub async fn list_pokes(
     auth: AuthUser,
     Query(params): Query<shared::pagination::PaginationParams>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let limit = params.limit.unwrap_or(20).min(50) as i64;
+    let limit = params.limit.unwrap_or(20).min(50);
     let cursor = params.cursor.and_then(|c| c.parse::<i64>().ok());
 
     let rows = sqlx::query_as::<_, (i64, i64, String, String, String, bool, String)>(

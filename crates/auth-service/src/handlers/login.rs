@@ -44,12 +44,20 @@ pub async fn login(
         return Err(ApiError::BadRequest("Account has been deleted".into()));
     }
 
-    let password_valid = verify_password_multi(&req.password, &user.password_hash)?;
+    // Social-login accounts have no local password set yet; they must log in
+    // via the social provider until they call `POST /v1/auth/social/set-password`.
+    let existing_hash = user.password_hash.as_deref().filter(|s| !s.is_empty()).ok_or_else(|| {
+        ApiError::BadRequest(
+            "This account uses social login only. Log in with the original provider or set a password first.".into(),
+        )
+    })?;
+
+    let password_valid = verify_password_multi(&req.password, existing_hash)?;
     if !password_valid {
         return Err(ApiError::Unauthorized);
     }
 
-    if user.password_hash.starts_with("$2") {
+    if existing_hash.starts_with("$2") {
         let salt = SaltString::generate(OsRng);
         if let Ok(new_hash) = Argon2::default().hash_password(req.password.as_bytes(), &salt) {
             let _ = sqlx::query("UPDATE users SET password_hash = $1 WHERE id = $2")

@@ -20,3 +20,4 @@ tracing-subscriber = { workspace = true }
 validator = { workspace = true }
 redis = { workspace = true }
 rust_decimal = { workspace = true }
+aws-sdk-s3 = { workspace = true }

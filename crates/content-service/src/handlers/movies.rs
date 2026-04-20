@@ -60,21 +60,45 @@ pub struct MovieRow {
     pub created_at: OffsetDateTime,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ListMoviesQuery {
+    pub cursor: Option<String>,
+    pub limit: Option<i64>,
+    pub genre: Option<String>,
+    pub country: Option<String>,
+}
+
+impl ListMoviesQuery {
+    fn limit(&self) -> i64 {
+        self.limit.unwrap_or(20).clamp(1, 100)
+    }
+    fn cursor_id(&self) -> Option<i64> {
+        self.cursor.as_ref().and_then(|c| c.parse::<i64>().ok())
+    }
+}
+
 pub async fn list_movies(
     State(state): State<AppState>,
-    Query(params): Query<PaginationParams>,
+    Query(params): Query<ListMoviesQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let limit = params.limit();
     let cursor = params.cursor_id();
+    let genre = params.genre.as_deref().filter(|s| !s.is_empty());
+    let country = params.country.as_deref().filter(|s| !s.is_empty());
 
     let movies = sqlx::query_as::<_, MovieRow>(
         r#"
-        SELECT * FROM movies WHERE is_approved = TRUE
+        SELECT * FROM movies
+        WHERE is_approved = TRUE
           AND ($1::bigint IS NULL OR id < $1)
-        ORDER BY id DESC LIMIT $2
+          AND ($2::text IS NULL OR LOWER(genre) = LOWER($2))
+          AND ($3::text IS NULL OR LOWER(country) = LOWER($3))
+        ORDER BY id DESC LIMIT $4
         "#,
     )
     .bind(cursor)
+    .bind(genre)
+    .bind(country)
     .bind(limit + 1)
     .fetch_all(&state.db)
     .await?;

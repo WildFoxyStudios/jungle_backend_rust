@@ -2,6 +2,7 @@ pub mod cart;
 pub mod funding;
 pub mod gifts;
 pub mod health;
+pub mod invoices;
 pub mod jobs;
 pub mod offers;
 pub mod orders;

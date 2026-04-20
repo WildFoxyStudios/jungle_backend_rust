@@ -1,5 +1,7 @@
+pub mod audit;
 pub mod auth;
 pub mod config;
+pub mod crypto;
 pub mod db;
 pub mod email;
 pub mod email_templates;
@@ -18,5 +20,6 @@ pub mod search;
 pub mod site_config;
 pub mod sms;
 pub mod storage;
+pub mod telemetry;
 pub mod test_helpers;
 pub mod validation;

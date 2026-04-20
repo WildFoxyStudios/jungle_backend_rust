@@ -8,8 +8,10 @@ use serde_json::json;
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
+    models::user::PublicUserRow,
     pagination::PaginationParams,
 };
+use std::collections::HashMap;
 
 use super::posts::PostRow;
 
@@ -101,10 +103,48 @@ pub async fn get_feed(
     let data: Vec<_> = posts.into_iter().take(limit as usize).collect();
     let next_cursor = data.last().map(|p| p.id.to_string());
 
-    // Inject a feed ad every 5 posts
+    // Batch load publisher info for all posts
+    let user_ids: Vec<i64> = data.iter().map(|p| p.user_id).collect::<std::collections::HashSet<_>>().into_iter().collect();
+    let publishers: HashMap<i64, PublicUserRow> = if !user_ids.is_empty() {
+        let rows = sqlx::query_as::<_, PublicUserRow>(
+            r#"SELECT uuid, username, first_name, last_name, avatar, cover, about, is_verified, is_pro
+               FROM users WHERE id = ANY($1)"#,
+        )
+        .bind(&user_ids)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+
+        // Re-query with id to build the map
+        let id_rows: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT id, username FROM users WHERE id = ANY($1)",
+        )
+        .bind(&user_ids)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+
+        let username_map: HashMap<String, PublicUserRow> = rows.into_iter().map(|r| (r.username.clone(), r)).collect();
+        id_rows.into_iter().filter_map(|(id, uname)| {
+            username_map.get(&uname).cloned().map(|p| (id, p))
+        }).collect()
+    } else {
+        HashMap::new()
+    };
+
+    // Inject publisher + feed ad every 5 posts
     let mut result: Vec<serde_json::Value> = Vec::with_capacity(data.len() + 4);
     for (i, post) in data.iter().enumerate() {
-        result.push(serde_json::to_value(post).unwrap_or_default());
+        let mut val = serde_json::to_value(post).unwrap_or_default();
+        if let Some(obj) = val.as_object_mut()
+            && let Some(pub_row) = publishers.get(&post.user_id)
+        {
+            obj.insert(
+                "publisher".into(),
+                serde_json::to_value(pub_row).unwrap_or_default(),
+            );
+        }
+        result.push(val);
         if (i + 1) % 5 == 0
             && let Ok(Some(ad)) = get_feed_ad(&state.db, auth.user_id).await {
                 result.push(ad);

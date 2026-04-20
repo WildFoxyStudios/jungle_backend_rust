@@ -1,4 +1,5 @@
 pub mod aamarpay;
+pub mod authorize_net;
 pub mod bank_transfer;
 pub mod braintree;
 pub mod cashfree;

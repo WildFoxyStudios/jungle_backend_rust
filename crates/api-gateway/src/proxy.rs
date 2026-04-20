@@ -76,7 +76,13 @@ pub async fn proxy_request(
         headers.insert("x-forwarded-for", val);
     }
 
-    let body_bytes = match axum::body::to_bytes(req.into_body(), 10 * 1024 * 1024).await {
+    let max_body = if path.starts_with("/v1/media/") || path.starts_with("/v1/stories") || path.starts_with("/v1/reels") || path.starts_with("/v1/albums") {
+        100 * 1024 * 1024 // 100 MB for media uploads
+    } else {
+        10 * 1024 * 1024 // 10 MB for everything else
+    };
+
+    let body_bytes = match axum::body::to_bytes(req.into_body(), max_body).await {
         Ok(b) => b,
         Err(_) => {
             return (StatusCode::PAYLOAD_TOO_LARGE, "Request body too large").into_response();
@@ -108,8 +114,14 @@ pub async fn proxy_request(
             response
         }
         Err(e) => {
-            tracing::error!(upstream = %upstream_url, error = %e, "Upstream request failed");
-            (StatusCode::BAD_GATEWAY, "Upstream service unavailable").into_response()
+            let is_connect = e.is_connect() || e.is_timeout();
+            tracing::error!(upstream = %upstream_url, error = %e, connect_err = is_connect, "Upstream request failed");
+            let msg = if is_connect {
+                format!("Service unavailable – could not connect to upstream ({})", path.split('/').take(4).collect::<Vec<_>>().join("/"))
+            } else {
+                format!("Upstream error: {}", e)
+            };
+            (StatusCode::BAD_GATEWAY, msg).into_response()
         }
     }
 }

@@ -6,6 +6,10 @@ pub struct AppConfig {
     pub redis_url: String,
     pub nats_url: String,
     pub jwt_secret: String,
+    /// Previous JWT secret kept during rotation grace period. Tokens signed
+    /// with the old secret (carrying `kid: "previous"`) are still accepted
+    /// until they naturally expire.
+    pub jwt_secret_previous: Option<String>,
     pub jwt_refresh_secret: String,
     pub server_host: String,
     pub server_port: u16,
@@ -26,6 +30,9 @@ impl AppConfig {
                 .unwrap_or_else(|_| "nats://127.0.0.1:4222".into()),
             jwt_secret: std::env::var("JWT_SECRET")
                 .expect("JWT_SECRET must be set"),
+            jwt_secret_previous: std::env::var("JWT_SECRET_PREVIOUS")
+                .ok()
+                .filter(|s| !s.is_empty()),
             jwt_refresh_secret: std::env::var("JWT_REFRESH_SECRET")
                 .unwrap_or_else(|_| std::env::var("JWT_SECRET").unwrap()),
             server_host: std::env::var("SERVER_HOST")

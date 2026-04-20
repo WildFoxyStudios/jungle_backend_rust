@@ -35,9 +35,10 @@ impl ServiceMap {
             ("/v1/boosted/pages", "GROUP_PAGE_SERVICE_URL"),
             ("/v1/boosted", "POST_SERVICE_URL"),
             ("/v1/live", "POST_SERVICE_URL"),
-            // Media & Stories
+            // Media & Stories & Uploads
             ("/v1/stories", "MEDIA_SERVICE_URL"),
             ("/v1/media", "MEDIA_SERVICE_URL"),
+            ("/uploads", "MEDIA_SERVICE_URL"),
             // Messaging
             ("/v1/conversations", "MESSAGING_SERVICE_URL"),
             ("/v1/messages", "MESSAGING_SERVICE_URL"),
@@ -56,6 +57,7 @@ impl ServiceMap {
             ("/v1/forums", "CONTENT_SERVICE_URL"),
             ("/v1/movies", "CONTENT_SERVICE_URL"),
             ("/v1/games", "CONTENT_SERVICE_URL"),
+            ("/v1/emojis", "CONTENT_SERVICE_URL"),
             // Commerce
             ("/v1/products", "COMMERCE_SERVICE_URL"),
             ("/v1/orders", "COMMERCE_SERVICE_URL"),

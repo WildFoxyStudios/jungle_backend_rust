@@ -3,7 +3,7 @@ use sqlx::PgPool;
 pub async fn create_test_user(db: &PgPool, username: &str, email: &str) -> i64 {
     let password_hash = "$argon2id$v=19$m=19456,t=2,p=1$test$testhash";
     sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO users (username, email, password, first_name, last_name, is_active)
+        r#"INSERT INTO users (username, email, password_hash, first_name, last_name, is_active)
            VALUES ($1, $2, $3, 'Test', 'User', TRUE)
            RETURNING id"#,
     )

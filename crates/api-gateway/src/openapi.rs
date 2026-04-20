@@ -5,7 +5,7 @@ use utoipa::OpenApi;
     info(
         title = "Jungle Backend API",
         version = "2.0.0",
-        description = "Jungle Social Network — Rust Backend API. 519 endpoints across 16 microservices.",
+        description = "Jungle Social Network — Rust Backend API. 560+ endpoints across 16 microservices.",
         contact(name = "Jungle", url = "https://Jungle.com"),
         license(name = "Proprietary")
     ),
@@ -183,6 +183,7 @@ fn add_user_paths(doc: &mut utoipa::openapi::OpenApi) {
         p("GET", "/v1/users/me/notification-settings", "users", "Get notification settings", "users_notif_settings"),
         p("PUT", "/v1/users/me/notification-settings", "users", "Update notification settings", "users_notif_settings_upd"),
         p("GET", "/v1/users/me/invite-code", "users", "Get my invite code", "users_invite"),
+        p("GET", "/v1/users/{username}/popover", "users", "Lightweight profile popover payload", "users_popover"),
     ]);
 }
 
@@ -245,6 +246,16 @@ fn add_post_paths(doc: &mut utoipa::openapi::OpenApi) {
         p("GET", "/v1/live/friends", "posts", "Friends live", "live_friends"),
         p("POST", "/v1/live/{id}/comment", "posts", "Live comment", "live_comment"),
         p("POST", "/v1/live/{id}/react", "posts", "Live react", "live_react"),
+        p("GET",  "/v1/posts/{id}/reactors", "posts", "List users who reacted (filter by reaction_type)", "posts_reactors"),
+        p("POST", "/v1/posts/{id}/wonder", "posts", "Mark as wonder", "posts_wonder"),
+        p("DELETE", "/v1/posts/{id}/wonder", "posts", "Remove wonder", "posts_unwonder"),
+        p("POST", "/v1/posts/{id}/video-view", "posts", "Record a video view (dedup)", "posts_video_view"),
+        p("POST", "/v1/posts/{id}/notify-followers", "posts", "Notify followers about this post", "posts_notify"),
+        p("PUT",  "/v1/posts/{id}/disable-comment", "posts", "Toggle comments disabled", "posts_comments_off"),
+        p("PUT",  "/v1/posts/{id}/mark-sold", "posts", "Mark a product/offer post as sold", "posts_sold"),
+        p("DELETE", "/v1/posts/{id}/images/{image_id}", "posts", "Delete a single image from a post", "posts_img_del"),
+        p("POST", "/v1/posts/preview-url", "posts", "Fetch URL preview metadata (OG/Twitter)", "posts_url_preview"),
+        p("GET",  "/v1/posts/open-to-work", "posts", "Feed of #open-to-work posts", "posts_otw"),
     ]);
 }
 
@@ -310,6 +321,8 @@ fn add_media_paths(doc: &mut utoipa::openapi::OpenApi) {
         p("POST", "/v1/stories/{id}/react", "media", "React to story", "stories_react"),
         p("GET", "/v1/stories/{id}/reactions", "media", "Story reactions", "stories_reactions"),
         p("POST", "/v1/stories/{id}/reply", "media", "Reply to story", "stories_reply"),
+        p("POST", "/v1/media/{id}/rotate", "media", "Rotate an image (90/180/270/-90)", "media_rotate"),
+        p("POST", "/v1/media/{id}/crop", "media", "Crop an image (x/y/width/height px)", "media_crop"),
     ]);
 }
 
@@ -390,6 +403,7 @@ fn add_page_paths(doc: &mut utoipa::openapi::OpenApi) {
         p("POST", "/v1/pages/{id}/boost", "pages", "Boost page", "pages_boost"),
         p("POST", "/v1/pages/{id}/verify", "pages", "Request page verification", "pages_verify"),
         p("GET", "/v1/boosted/pages", "pages", "My boosted pages", "boosted_pages"),
+        p("GET", "/v1/pages/nearby", "pages", "Nearby pages (Haversine; lat/lng/radius_km/category)", "pages_nearby"),
     ]);
 }
 
@@ -454,6 +468,7 @@ fn add_content_paths(doc: &mut utoipa::openapi::OpenApi) {
         p("POST", "/v1/games/{id}/play", "content", "Play game", "games_play"),
         p("GET", "/v1/pages/custom", "content", "List custom pages", "custom_pages"),
         p("GET", "/v1/pages/custom/{slug}", "content", "Get custom page", "custom_page"),
+        p("GET", "/v1/emojis", "content", "Public emoji catalog grouped by category", "emojis_catalog"),
     ]);
 }
 
@@ -483,6 +498,7 @@ fn add_commerce_paths(doc: &mut utoipa::openapi::OpenApi) {
         p("GET", "/v1/jobs/applied", "commerce", "Applied jobs", "jobs_applied"),
         p("GET", "/v1/jobs/search", "commerce", "Search jobs", "jobs_search"),
         p("GET", "/v1/jobs/categories", "commerce", "Job categories", "jobs_cats"),
+        p("GET", "/v1/jobs/nearby", "commerce", "Jobs near the user (lat/lng/radius)", "jobs_nearby"),
         p("GET", "/v1/jobs/{id}", "commerce", "Get job", "jobs_get"),
         p("PUT", "/v1/jobs/{id}", "commerce", "Update job", "jobs_update"),
         p("DELETE", "/v1/jobs/{id}", "commerce", "Delete job", "jobs_delete"),
@@ -697,16 +713,46 @@ fn add_admin_paths(doc: &mut utoipa::openapi::OpenApi) {
         // Backups
         p("GET", "/v1/admin/backups", "admin", "List backups", "admin_backups"),
         p("POST", "/v1/admin/backups/trigger", "admin", "Trigger backup", "admin_backup_trigger"),
+        // System / Changelog / Updates
+        p("GET", "/v1/admin/changelog", "admin", "List applied DB migrations (_sqlx_migrations)", "admin_changelog"),
+        p("GET", "/v1/admin/manage-updates", "admin", "Current backend/DB/Redis versions + runtime info", "admin_updates"),
+        // Cronjobs
+        p("GET", "/v1/admin/cronjobs", "admin", "List cronjob configs + last run status", "admin_cron_list"),
+        p("PUT", "/v1/admin/cronjobs/{name}", "admin", "Enable/disable a cronjob", "admin_cron_upd"),
+        p("GET", "/v1/admin/cronjobs/runs", "admin", "Recent cronjob execution history", "admin_cron_runs"),
+        // Live streaming admin
+        p("GET", "/v1/admin/live/stats", "admin", "Live streaming stats (active/total/viewers)", "admin_live_stats"),
+        // Audit log
+        p("GET", "/v1/admin/audit-log", "admin", "Admin action audit trail", "admin_audit"),
+        // Storage providers CRUD
+        p("GET", "/v1/admin/storage", "admin", "List storage providers", "admin_storage_list"),
+        p("POST", "/v1/admin/storage", "admin", "Create storage provider", "admin_storage_create"),
+        p("PUT", "/v1/admin/storage/{id}", "admin", "Update storage provider", "admin_storage_upd"),
+        p("DELETE", "/v1/admin/storage/{id}", "admin", "Delete storage provider", "admin_storage_del"),
+        p("POST", "/v1/admin/storage/{id}/test", "admin", "Test storage provider credentials", "admin_storage_test"),
+        // Permissions catalog
+        p("GET", "/v1/admin/permissions/catalog", "admin", "Admin permissions catalog", "admin_perms_catalog"),
+        p("GET", "/v1/admin/permissions", "admin", "Per-user admin permission grid", "admin_perms_list"),
+        p("PUT", "/v1/admin/permissions/{user_id}", "admin", "Update a user's admin permissions", "admin_perms_upd"),
+        // Direct email to users
+        p("POST", "/v1/admin/users/{id}/send-email", "admin", "Send a one-off email to a user", "admin_user_email"),
+        // Developer OAuth apps (admin review)
+        p("POST", "/v1/admin/oauth-apps/{id}/approve", "admin", "Approve OAuth app", "admin_oauth_approve"),
     ]);
 }
 
-// ── AI Service (3 endpoints) ─────────────────────────────────────────────────
+// ── AI Service (8 endpoints) ─────────────────────────────────────────────────
 
 fn add_ai_paths(doc: &mut utoipa::openapi::OpenApi) {
     insert_all(doc, vec![
         p("POST", "/v1/ai/chat", "ai", "AI chat completion", "ai_chat"),
         p("POST", "/v1/ai/suggest-post", "ai", "AI post suggestion", "ai_suggest"),
         p("POST", "/v1/ai/describe-image", "ai", "AI image description", "ai_describe"),
+        p("POST", "/v1/ai/generate-post", "ai", "AI — generate a long-form post", "ai_gen_post"),
+        p("POST", "/v1/ai/generate-blog", "ai", "AI — generate a blog article", "ai_gen_blog"),
+        p("POST", "/v1/ai/generate-images", "ai", "AI — generate images from a prompt", "ai_gen_images"),
+        p("GET",  "/v1/ai/balance", "ai", "Remaining AI credits (words + images)", "ai_balance"),
+        p("GET",  "/v1/ai/providers", "ai", "List configured AI providers", "ai_providers"),
     ]);
 }
 

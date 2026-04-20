@@ -66,6 +66,75 @@ pub async fn search_users(
     Ok(Json(serde_json::json!({ "data": users })))
 }
 
+#[derive(Debug, Serialize, FromRow)]
+pub struct ProfessionalSearchResult {
+    pub id: i64,
+    pub username: String,
+    pub first_name: String,
+    pub last_name: String,
+    pub avatar: String,
+    pub is_verified: bool,
+    pub is_pro: i16,
+    pub working: String,
+    pub school: String,
+    pub about: String,
+    pub address: String,
+    pub city: String,
+    pub website: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ProfessionalSearchQuery {
+    pub q: String,
+    pub location: Option<String>,
+    #[serde(flatten)]
+    pub pagination: PaginationParams,
+}
+
+/// GET /v1/search/professional — LinkedIn-style search with rich profile fields.
+/// Matches against username, name, working title, school, and about.
+/// Optional `location` narrows by city/address.
+pub async fn search_professionals(
+    State(state): State<AppState>,
+    _auth: OptionalAuth,
+    Query(params): Query<ProfessionalSearchQuery>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let query = params.q.trim();
+    if query.len() < 2 {
+        return Ok(Json(serde_json::json!({ "data": [] })));
+    }
+
+    let ilike = format!("%{}%", query);
+    let limit = params.pagination.limit();
+    let location_filter = params
+        .location
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| format!("%{}%", s));
+
+    let users = sqlx::query_as::<_, ProfessionalSearchResult>(
+        r#"SELECT id, username, first_name, last_name, avatar, is_verified, is_pro,
+                  working, school, about, address, city, website
+           FROM users
+           WHERE deleted_at IS NULL AND is_active = TRUE
+             AND (
+                  username ILIKE $1 OR first_name ILIKE $1 OR last_name ILIKE $1
+                  OR working ILIKE $1 OR school ILIKE $1 OR about ILIKE $1
+             )
+             AND ($2::text IS NULL OR city ILIKE $2 OR address ILIKE $2)
+           ORDER BY is_verified DESC, is_pro DESC, id DESC
+           LIMIT $3"#,
+    )
+    .bind(&ilike)
+    .bind(&location_filter)
+    .bind(limit)
+    .fetch_all(&state.db)
+    .await?;
+
+    Ok(Json(serde_json::json!({ "data": users })))
+}
+
 pub async fn suggestions(
     State(state): State<AppState>,
     auth: AuthUser,

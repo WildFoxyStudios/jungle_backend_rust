@@ -89,6 +89,42 @@ pub async fn update_notification_settings(
     Ok(Json(json!({ "data": { "updated": true } })))
 }
 
+// ── Onboarding ──
+
+#[derive(Debug, Deserialize)]
+pub struct OnboardingSkipRequest {
+    pub step: String, // "avatar" | "info" | "follow"
+}
+
+/// POST /v1/users/me/onboarding/skip — mark a step as intentionally skipped
+pub async fn onboarding_skip(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(req): Json<OnboardingSkipRequest>,
+) -> Result<Json<Value>, ApiError> {
+    let valid = ["avatar", "info", "follow"];
+    if !valid.contains(&req.step.as_str()) {
+        return Err(ApiError::BadRequest(format!(
+            "step must be one of {:?}",
+            valid
+        )));
+    }
+
+    // Persist in a JSON column of users table: onboarding_progress -> { "<step>": "skipped" }
+    sqlx::query(
+        r#"UPDATE users
+              SET onboarding_progress = COALESCE(onboarding_progress, '{}'::jsonb)
+                                        || jsonb_build_object($2::text, 'skipped')
+            WHERE id = $1"#,
+    )
+    .bind(auth.user_id)
+    .bind(&req.step)
+    .execute(&state.db)
+    .await?;
+
+    Ok(Json(json!({ "data": { "skipped": req.step } })))
+}
+
 // ── Invite Codes ──
 
 pub async fn get_my_invite_code(

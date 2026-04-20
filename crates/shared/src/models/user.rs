@@ -10,7 +10,9 @@ pub struct User {
     pub username: String,
     pub email: String,
     pub phone_number: Option<String>,
-    pub password_hash: String,
+    /// NULL for accounts created via OAuth/social login that have not yet set a
+    /// local password via `POST /v1/auth/social/set-password`.
+    pub password_hash: Option<String>,
     pub first_name: String,
     pub last_name: String,
     pub avatar: String,
@@ -20,6 +22,11 @@ pub struct User {
     pub birthday: Option<time::Date>,
     pub country_id: Option<i32>,
     pub city: String,
+    pub address: String,
+    pub website: String,
+    pub school: String,
+    pub working: String,
+    pub working_link: String,
     pub language: String,
     pub is_active: bool,
     pub is_admin: bool,
@@ -27,13 +34,37 @@ pub struct User {
     pub is_verified: bool,
     pub email_verified: bool,
     pub phone_verified: bool,
+    pub email_code: String,
+    pub privacy_settings: serde_json::Value,
+    pub notification_settings: serde_json::Value,
+    pub balance: rust_decimal::Decimal,
+    pub wallet: rust_decimal::Decimal,
+    pub points: i64,
+    pub social_logins: serde_json::Value,
+    pub lat: Option<f64>,
+    pub lng: Option<f64>,
+    pub last_seen: Option<OffsetDateTime>,
+    pub is_online: bool,
     pub two_factor_enabled: bool,
     pub two_factor_method: Option<String>,
     pub two_factor_secret: Option<String>,
-    pub last_seen: Option<OffsetDateTime>,
     pub deleted_at: Option<OffsetDateTime>,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
+    pub is_fake: bool,
+    pub monetization_enabled: bool,
+    pub subscription_price: rust_decimal::Decimal,
+    pub is_live: Option<bool>,
+    pub live_stream_id: Option<String>,
+    pub monetization_settings: serde_json::Value,
+    pub android_device_id: Option<String>,
+    pub ios_device_id: Option<String>,
+    pub android_notification_id: Option<String>,
+    pub ios_notification_id: Option<String>,
+    pub social_links: serde_json::Value,
+    pub start_up_info: bool,
+    pub startup_image: bool,
+    pub startup_follow: bool,
 }
 
 #[derive(Debug, Clone, Serialize, FromRow)]
@@ -100,11 +131,23 @@ pub struct AuthUserResponse {
     pub last_name: String,
     pub name: String,
     pub avatar: String,
+    pub cover: String,
+    pub about: String,
+    pub gender: String,
+    pub birthday: Option<String>,
+    pub location: String,
+    pub website: String,
+    pub school: String,
+    pub working: String,
     pub is_verified: bool,
     pub is_pro: i16,
     pub is_admin: bool,
     pub two_factor_enabled: bool,
     pub email_verified: bool,
+    /// `true` if the account has a local email+password credential. OAuth-only
+    /// users (`password_hash IS NULL`) should hit `POST /v1/auth/social/set-password`
+    /// to set one before they can use `PUT /v1/auth/password`.
+    pub has_password: bool,
 }
 
 impl From<&User> for AuthUserResponse {
@@ -124,11 +167,24 @@ impl From<&User> for AuthUserResponse {
             last_name: u.last_name.clone(),
             name,
             avatar: u.avatar.clone(),
+            cover: u.cover.clone(),
+            about: u.about.clone(),
+            gender: u.gender.clone(),
+            birthday: u.birthday.map(|d| d.to_string()),
+            location: u.city.clone(),
+            website: u.website.clone(),
+            school: u.school.clone(),
+            working: u.working.clone(),
             is_verified: u.is_verified,
             is_pro: u.is_pro,
             is_admin: u.is_admin,
             two_factor_enabled: u.two_factor_enabled,
             email_verified: u.email_verified,
+            has_password: u
+                .password_hash
+                .as_deref()
+                .map(|h| !h.is_empty())
+                .unwrap_or(false),
         }
     }
 }

@@ -1,22 +1,22 @@
+mod credits;
+mod crypto;
 mod handlers;
+mod providers;
 mod routes;
 
-use shared::config::AppConfig;
-use std::sync::Arc;
 use http::{header, Method};
+use shared::{auth::AppState, config::AppConfig, db, events};
+use std::sync::Arc;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use crate::providers::ProviderRegistry;
 
 #[tokio::main]
 async fn main() {
-    tracing_subscriber::registry()
-        .with(tracing_subscriber::EnvFilter::new(
-            std::env::var("RUST_LOG").unwrap_or_else(|_| "info".into()),
-        ))
-        .with(tracing_subscriber::fmt::layer())
-        .init();
+    shared::telemetry::init("ai-service");
 
     let config = Arc::new(AppConfig::from_env());
+    let pool = db::create_pool(&config.database_url).await;
+    db::run_migrations(&pool).await;
 
     let redis_client = redis::Client::open(config.redis_url.as_str()).expect("Redis client");
     let redis_conn = redis::aio::ConnectionManager::new(redis_client)
@@ -47,11 +47,35 @@ async fn main() {
         ]))
         .allow_credentials(true);
 
+    let event_bus: Arc<dyn events::EventBus> = match events::NatsEventBus::connect(&config.nats_url).await {
+        Ok(bus) => Arc::new(bus),
+        Err(e) => {
+            tracing::warn!("NATS unavailable: {e}");
+            Arc::new(events::NoopEventBus)
+        }
+    };
+
+    // Encryption key derived from INTERNAL_SERVICE_KEY (fallback to JWT secret)
+    let master_key = std::env::var("INTERNAL_SERVICE_KEY")
+        .or_else(|_| std::env::var("JWT_SECRET"))
+        .unwrap_or_else(|_| "change-me-insecure-dev-key".into());
+    let enc_key = shared::crypto::derive_key(master_key.as_bytes()).to_vec();
+
+    let http = reqwest::Client::new();
+    let registry = Arc::new(ProviderRegistry::new(pool.clone(), http.clone(), enc_key.clone()));
+
+    let app_state = AppState {
+        db: pool,
+        redis: redis_conn,
+        config: config.clone(),
+        event_bus,
+    };
+
     let state = handlers::AiState {
-        http: reqwest::Client::new(),
-        _redis: redis_conn,
-        openai_key: std::env::var("OPENAI_API_KEY").unwrap_or_default(),
-        openai_model: std::env::var("OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o-mini".into()),
+        app: app_state,
+        http,
+        registry,
+        enc_key,
     };
 
     let app = routes::create_router(state)

@@ -9,3 +9,15 @@ pub mod notification_cleanup;
 pub mod pro_subscription_check;
 pub mod session_cleanup;
 pub mod story_cleanup;
+
+// Batch 2
+pub mod dlq_consumer;
+
+// Batch 3
+pub mod analytics_snapshot_daily;
+pub mod auto_delete_old_messages;
+pub mod crypto_payment_reconciliation;
+pub mod expire_pending_ads;
+pub mod newsletter_dispatcher;
+pub mod publish_scheduled_posts;
+pub mod weekly_memories_digest;
