@@ -4,7 +4,7 @@ use axum::{
         Path, Query, State,
         ws::{Message, WebSocket, WebSocketUpgrade},
     },
-    http::{HeaderMap, Method, StatusCode, header},
+    http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{get, post},
 };
@@ -15,10 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use shared::{
     auth::{AppState, Claims},
-    config::AppConfig,
-    db,
     errors::ApiError,
-    events,
 };
 use std::{
     collections::{HashMap, HashSet},
@@ -26,16 +23,21 @@ use std::{
 };
 use time::OffsetDateTime;
 use tokio::sync::{RwLock, broadcast};
-use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 
 #[derive(Clone)]
-struct LiveState {
+pub struct LiveState {
     rooms: Arc<RwLock<HashMap<String, Room>>>,
     channels: Arc<RwLock<HashMap<String, broadcast::Sender<SignalEnvelope>>>>,
 }
 
+impl Default for LiveState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl LiveState {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             rooms: Arc::new(RwLock::new(HashMap::new())),
             channels: Arc::new(RwLock::new(HashMap::new())),
@@ -45,7 +47,7 @@ impl LiveState {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-enum RoomKind {
+pub enum RoomKind {
     Live,
     AudioCall,
     VideoCall,
@@ -81,14 +83,14 @@ struct RoomSummary {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-struct SignalEnvelope {
-    room_id: String,
-    from_user_id: i64,
+pub struct SignalEnvelope {
+    pub room_id: String,
+    pub from_user_id: i64,
     #[serde(skip_serializing_if = "Option::is_none")]
-    target_user_id: Option<i64>,
-    kind: String,
-    payload: Value,
-    sent_at: String,
+    pub target_user_id: Option<i64>,
+    pub kind: String,
+    pub payload: Value,
+    pub sent_at: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -107,61 +109,13 @@ struct ClientSignal {
 }
 
 #[derive(Clone)]
-struct ServiceState {
-    app: AppState,
-    live: LiveState,
+pub struct ServiceState {
+    pub app: AppState,
+    pub live: LiveState,
 }
 
-#[tokio::main]
-async fn main() {
-    shared::telemetry::init("live-service");
-
-    let config = Arc::new(AppConfig::from_env());
-    let pool = db::create_pool(&config.database_url).await;
-    db::run_migrations(&pool).await;
-
-    let redis_client = redis::Client::open(config.redis_url.as_str()).expect("Redis client");
-    let redis_conn = redis::aio::ConnectionManager::new(redis_client)
-        .await
-        .expect("Redis connect");
-
-    let event_bus = events::connect_event_bus(&config.nats_url).await;
-    let app_state = AppState {
-        db: pool,
-        redis: redis_conn,
-        config: config.clone(),
-        event_bus,
-    };
-    let state = ServiceState {
-        app: app_state,
-        live: LiveState::new(),
-    };
-
-    let origins: Vec<_> = config
-        .allowed_origins
-        .iter()
-        .filter_map(|o| o.parse().ok())
-        .collect();
-    let cors = CorsLayer::new()
-        .allow_origin(AllowOrigin::list(origins))
-        .allow_methods(AllowMethods::list([
-            Method::GET,
-            Method::POST,
-            Method::PUT,
-            Method::PATCH,
-            Method::DELETE,
-            Method::OPTIONS,
-        ]))
-        .allow_headers(AllowHeaders::list([
-            header::CONTENT_TYPE,
-            header::AUTHORIZATION,
-            header::ACCEPT,
-            header::ORIGIN,
-            header::COOKIE,
-        ]))
-        .allow_credentials(true);
-
-    let app = Router::new()
+pub fn create_router(state: ServiceState) -> Router {
+    Router::new()
         .route("/health", get(health))
         .route("/v1/live-native/rooms", post(create_room).get(list_rooms))
         .route("/v1/live-native/rooms/{room_id}", get(get_room))
@@ -169,20 +123,7 @@ async fn main() {
         .route("/v1/live-native/rooms/{room_id}/leave", post(leave_room))
         .route("/v1/live-native/ice-config", get(ice_config))
         .route("/ws/live-native", get(ws_live))
-        .route(
-            "/metrics",
-            axum::routing::get(shared::metrics::metrics_handler),
-        )
-        .layer(axum::middleware::from_fn(
-            shared::metrics::metrics_middleware,
-        ))
-        .layer(cors)
-        .with_state(state);
-
-    let addr = config.listen_addr();
-    tracing::info!("live-service listening on {}", addr);
-    let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+        .with_state(state)
 }
 
 async fn health() -> Json<Value> {
@@ -396,7 +337,6 @@ async fn handle_ws(socket: WebSocket, live: LiveState, room_id: String, user_id:
     let (mut sender, mut receiver) = socket.split();
     let send_task = tokio::spawn(async move {
         while let Ok(msg) = rx.recv().await {
-            // only one-to-one or room-wide messages
             if (msg.target_user_id.is_none()
                 || msg.target_user_id == Some(user_id)
                 || msg.from_user_id == user_id)

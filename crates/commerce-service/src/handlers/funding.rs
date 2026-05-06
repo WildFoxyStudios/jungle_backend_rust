@@ -298,15 +298,13 @@ pub async fn donate(
         .bind(id)
         .fetch_optional(&state.db)
         .await
-        {
-            if raised >= goal {
+            && raised >= goal {
                 let _ = state.event_bus.publish(&DomainEvent::FundingGoalReached {
                     funding_id: id,
                     creator_id,
                     goal_amount: goal.to_string(),
                 }).await;
             }
-        }
     }
 
     Ok(Json(
@@ -456,7 +454,7 @@ pub async fn withdraw_funding(
 
     // Update raised amount (financial data — must propagate errors)
     sqlx::query("UPDATE fundings SET raised_amount = raised_amount - $1 WHERE id = $2")
-        .bind(&amount)
+        .bind(amount)
         .bind(funding_id)
         .execute(&state.db)
         .await

@@ -89,9 +89,9 @@ crc32fast = "1.4"
 ammonia = "4"
 serde_urlencoded = "0.7"
 urlencoding = "2"
-async-nats = "0.38"
+async-nats = "0.47"
 futures = "0.3"
-prometheus = "0.13"
+prometheus = "0.14"
 lettre = { version = "0.11", features = ["tokio1-native-tls", "builder"] }
 image = "0.25"
 aws-sdk-s3 = { version = "1", features = ["behavior-version-latest"] }

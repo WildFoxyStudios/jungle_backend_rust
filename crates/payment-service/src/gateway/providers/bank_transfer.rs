@@ -10,6 +10,12 @@ use crate::gateway::{
 /// via the admin panel (which reads from the database directly).
 pub struct BankTransferGateway;
 
+impl Default for BankTransferGateway {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BankTransferGateway {
     pub fn new() -> Self {
         Self

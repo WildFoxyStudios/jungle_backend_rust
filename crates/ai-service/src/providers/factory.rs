@@ -135,9 +135,9 @@ impl ProviderRegistry {
                 }
             };
 
-            let kind = match ProviderKind::from_str(&row.provider_type) {
-                Some(k) => k,
-                None => {
+            let kind = match row.provider_type.parse::<ProviderKind>() {
+                Ok(k) => k,
+                Err(()) => {
                     tracing::warn!(
                         provider_type = %row.provider_type,
                         priority = row.priority,

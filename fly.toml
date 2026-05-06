@@ -1,8 +1,11 @@
-app = "jungle-api-gateway"
+app = "jungle-api-gw"
 primary_region = "mad"
 
 [build]
   dockerfile = "Dockerfile"
+
+[vm]
+  memory = "2gb"
 
 [env]
   SERVER_HOST = "0.0.0.0"
@@ -25,7 +28,7 @@ primary_region = "mad"
   LIVE_SERVICE_URL = "http://localhost:3014"
 
 [processes]
-  app = "api-gateway"
+  app = "/usr/local/bin/start.sh"
 
 [[services]]
   protocol = "tcp"

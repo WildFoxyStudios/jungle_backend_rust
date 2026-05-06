@@ -3,6 +3,8 @@
 //! Supports OpenAI, Anthropic, and Google Gemini. A factory selects the
 //! primary provider and falls back to the next configured provider on failure.
 
+use std::str::FromStr;
+
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
@@ -31,13 +33,17 @@ impl ProviderKind {
             ProviderKind::Gemini => "gemini",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Option<Self> {
+impl FromStr for ProviderKind {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "openai" => Some(ProviderKind::Openai),
-            "anthropic" | "claude" => Some(ProviderKind::Anthropic),
-            "gemini" | "google" => Some(ProviderKind::Gemini),
-            _ => None,
+            "openai" => Ok(ProviderKind::Openai),
+            "anthropic" | "claude" => Ok(ProviderKind::Anthropic),
+            "gemini" | "google" => Ok(ProviderKind::Gemini),
+            _ => Err(()),
         }
     }
 }

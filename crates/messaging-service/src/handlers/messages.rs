@@ -362,13 +362,12 @@ pub async fn send_message(
     // Plain `media` JSON without media_id: ensure array is non-empty for non-text types.
     if req.media_id.is_none() && req.sticker_id.is_none() && req.gift_id.is_none() {
         let mt = msg_type.as_str();
-        if matches!(mt, "image" | "video" | "audio" | "file") {
-            if !media.as_array().is_some_and(|a| !a.is_empty()) {
+        if matches!(mt, "image" | "video" | "audio" | "file")
+            && media.as_array().is_none_or(|a| a.is_empty()) {
                 return Err(ApiError::BadRequest(
                     "media array or media_id required for this message type".into(),
                 ));
             }
-        }
         if mt == "text" && content.trim().is_empty() {
             return Err(ApiError::BadRequest("Text message content required".into()));
         }

@@ -154,7 +154,7 @@ mod tests {
         ];
         for case in cases {
             let parsed = DeepLink::parse(case).unwrap();
-            let re_parsed = DeepLink::parse(&parsed.to_url().trim_start_matches('/').replace('/', "/"));
+            let re_parsed = DeepLink::parse(parsed.to_url().trim_start_matches('/'));
             // For comment, to_url returns "/post/99#comment-99" which can't be round-tripped
             if case.starts_with("comment/") {
                 continue;

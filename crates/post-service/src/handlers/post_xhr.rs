@@ -63,7 +63,7 @@ fn is_private_ip(addr: &std::net::IpAddr) -> bool {
     }
 }
 
-fn extract_host<'a>(url: &'a str) -> Option<&'a str> {
+fn extract_host(url: &str) -> Option<&str> {
     let rest = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))?;

@@ -860,8 +860,8 @@ pub async fn admin_test_provider(
     let api_key = crate::crypto::decrypt(&state.enc_key, &row.2)
         .map_err(|e| ApiError::Internal(format!("decryption: {}", e)))?;
 
-    let kind = crate::providers::ProviderKind::from_str(&row.0)
-        .ok_or(ApiError::BadRequest("unknown provider_type".into()))?;
+    let kind = row.0.parse::<crate::providers::ProviderKind>()
+        .map_err(|_| ApiError::BadRequest("unknown provider_type".into()))?;
 
     let model_text = row.3.unwrap_or_default();
     let model_image = row.4.unwrap_or_default();

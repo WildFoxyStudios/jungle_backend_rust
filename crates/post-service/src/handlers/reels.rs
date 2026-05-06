@@ -49,11 +49,10 @@ async fn require_reels_feature(state: &AppState) -> Result<(), ApiError> {
 }
 
 fn is_missing_reel_views_table(e: &sqlx::Error) -> bool {
-    if let sqlx::Error::Database(db) = e {
-        if db.code().as_deref() == Some("42P01") {
+    if let sqlx::Error::Database(db) = e
+        && db.code().as_deref() == Some("42P01") {
             return db.message().to_lowercase().contains("reel_views");
         }
-    }
     false
 }
 
@@ -596,7 +595,7 @@ pub async fn create_reel(
     .bind(&req.media)
     .bind(privacy)
     .bind(is_approved)
-    .bind(comments_st as i16)
+    .bind(comments_st)
     .bind(req.audio_track_id)
     .bind(req.remix_of_post_id)
     .bind(&template)

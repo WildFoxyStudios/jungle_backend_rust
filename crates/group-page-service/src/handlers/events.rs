@@ -121,20 +121,18 @@ pub async fn create_event(
         return Err(ApiError::BadRequest("end_at must be after start_at".into()));
     }
 
-    if let Some(lat) = req.latitude {
-        if !(-90.0..=90.0).contains(&lat) {
+    if let Some(lat) = req.latitude
+        && !(-90.0..=90.0).contains(&lat) {
             return Err(ApiError::BadRequest(
                 "latitude must be between -90 and 90".into(),
             ));
         }
-    }
-    if let Some(lng) = req.longitude {
-        if !(-180.0..=180.0).contains(&lng) {
+    if let Some(lng) = req.longitude
+        && !(-180.0..=180.0).contains(&lng) {
             return Err(ApiError::BadRequest(
                 "longitude must be between -180 and 180".into(),
             ));
         }
-    }
     if req.latitude.is_some() != req.longitude.is_some() {
         return Err(ApiError::BadRequest(
             "latitude and longitude must both be set or both omitted".into(),
@@ -219,20 +217,18 @@ pub async fn update_event(
     let start_at = req.start_at.as_deref().map(parse_datetime).transpose()?;
     let end_at = req.end_at.as_deref().map(parse_datetime).transpose()?;
 
-    if let Some(lat) = req.latitude {
-        if !(-90.0..=90.0).contains(&lat) {
+    if let Some(lat) = req.latitude
+        && !(-90.0..=90.0).contains(&lat) {
             return Err(ApiError::BadRequest(
                 "latitude must be between -90 and 90".into(),
             ));
         }
-    }
-    if let Some(lng) = req.longitude {
-        if !(-180.0..=180.0).contains(&lng) {
+    if let Some(lng) = req.longitude
+        && !(-180.0..=180.0).contains(&lng) {
             return Err(ApiError::BadRequest(
                 "longitude must be between -180 and 180".into(),
             ));
         }
-    }
     if req.latitude.is_some() != req.longitude.is_some() {
         return Err(ApiError::BadRequest(
             "latitude and longitude must both be set or both omitted".into(),

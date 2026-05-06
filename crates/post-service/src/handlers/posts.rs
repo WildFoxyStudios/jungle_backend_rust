@@ -220,8 +220,8 @@ pub async fn update_post(
     .ok_or(ApiError::NotFound("Post not found or access denied".into()))?;
 
     // Re-enqueue for moderation if content changed
-    if let Some(ref new_content) = req.content {
-        if !new_content.is_empty() {
+    if let Some(ref new_content) = req.content
+        && !new_content.is_empty() {
             let db = state.db.clone();
             let user_id = auth.user_id;
             let post_id = post.id;
@@ -233,7 +233,6 @@ pub async fn update_post(
                 .await;
             });
         }
-    }
 
     Ok(Json(serde_json::json!({ "data": post })))
 }

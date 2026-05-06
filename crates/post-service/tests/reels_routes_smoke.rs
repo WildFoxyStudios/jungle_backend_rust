@@ -7,10 +7,9 @@ use shared::test_helpers;
 async fn setup_test_db() -> sqlx::PgPool {
     let db_url = std::env::var("DATABASE_URL")
         .expect("DATABASE_URL must be set for integration tests");
-    let pool = sqlx::PgPool::connect(&db_url)
+    sqlx::PgPool::connect(&db_url)
         .await
-        .expect("Failed to connect to test database");
-    pool
+        .expect("Failed to connect to test database")
 }
 
 #[tokio::test]
@@ -57,5 +56,4 @@ async fn test_reels_trending_returns_empty() {
 #[test]
 fn test_reels_handler_functions_exist() {
     // Compile-time check that handler functions are defined
-    assert!(true, "reels handlers compiled successfully");
 }

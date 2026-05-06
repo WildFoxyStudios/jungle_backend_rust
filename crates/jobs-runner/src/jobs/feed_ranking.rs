@@ -7,9 +7,9 @@
 //! The scoring formula is a weighted linear combination of:
 //!
 //!   - **Affinity**       – how often / deeply the viewer has interacted with
-//!                          the post author in the past.
+//!     the post author in the past.
 //!   - **Engagement**     – (reactions + 2×comments + 3×shares) ÷ post age
-//!                          in hours (capped at 100).
+//!     in hours (capped at 100).
 //!   - **Recency**        – 1 ÷ (1 + hours since publish).
 //!   - **Content boost**  – video: 1.2, photo: 1.1, text: 1.0.
 //!

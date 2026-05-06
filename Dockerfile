@@ -34,6 +34,10 @@ RUN for d in auth-service user-service post-service messaging-service media-serv
 
 # Cache dependency build
 ENV SQLX_OFFLINE=true
+ENV CARGO_BUILD_JOBS=1
+ENV CARGO_PROFILE_RELEASE_OPT_LEVEL=2
+# Limit rustc codegen units to reduce peak memory per compilation unit
+ENV CARGO_PROFILE_RELEASE_CODEGEN_UNITS=1
 RUN cargo build --release --workspace
 
 # Copy real source
@@ -79,16 +83,45 @@ COPY --from=builder /app/migrations /app/migrations
 WORKDIR /app
 RUN mkdir -p /app/uploads && chown -R app:app /app/uploads
 
-# ── Startup script: runs api-gateway + jobs-runner for consolidated mode ──
+# ── Startup script: runs all 15 services + jobs-runner ──
 RUN printf '#!/bin/bash\n\
 set -e\n\
-echo "Starting api-gateway on port ${SERVER_PORT:-8080}..."\n\
-/usr/local/bin/api-gateway &\n\
-API_PID=$!\n\
+\n\
+PIDS=""\n\
+\n\
+start_svc() {\n\
+  local name=$1\n\
+  local port=$2\n\
+  echo "Starting ${name} on port ${port}..."\n\
+  /usr/local/bin/${name} &\n\
+  PIDS="$PIDS $!"\n\
+}\n\
+\n\
+# API Gateway (main entry point)\n\
+start_svc api-gateway "${SERVER_PORT:-8080}"\n\
+\n\
+# Internal services\n\
+start_svc auth-service         3001\n\
+start_svc user-service         3002\n\
+start_svc post-service         3003\n\
+start_svc messaging-service    3004\n\
+start_svc media-service        3005\n\
+start_svc notification-service 3006\n\
+start_svc group-page-service   3007\n\
+start_svc content-service      3008\n\
+start_svc commerce-service     3009\n\
+start_svc admin-service        3010\n\
+start_svc payment-service      3011\n\
+start_svc realtime-service     3012\n\
+start_svc ai-service           3013\n\
+start_svc live-service         3014\n\
+\n\
+# Background worker\n\
 echo "Starting jobs-runner..."\n\
 /usr/local/bin/jobs-runner &\n\
-JOBS_PID=$!\n\
-trap "kill $API_PID $JOBS_PID 2>/dev/null; exit 0" SIGTERM SIGINT\n\
+PIDS="$PIDS $!"\n\
+\n\
+trap "kill $PIDS 2>/dev/null; exit 0" SIGTERM SIGINT\n\
 wait -n\n\
 ' > /usr/local/bin/start.sh && chmod +x /usr/local/bin/start.sh
 

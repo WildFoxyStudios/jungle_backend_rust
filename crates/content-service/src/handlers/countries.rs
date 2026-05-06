@@ -42,11 +42,9 @@ pub async fn list_countries(
         .arg(&cache_key)
         .query_async::<Option<String>>(&mut redis)
         .await
-    {
-        if let Ok(value) = serde_json::from_str::<Value>(&cached) {
+        && let Ok(value) = serde_json::from_str::<Value>(&cached) {
             return Ok(Json(value));
         }
-    }
 
     let rows = if let Some(ref q) = filter.q {
         let pattern = format!("%{}%", q.to_lowercase());

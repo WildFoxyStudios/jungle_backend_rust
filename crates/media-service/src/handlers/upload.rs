@@ -484,10 +484,9 @@ fn extract_storage_key(url: &str) -> String {
     if let Some(key) = url.strip_prefix("/uploads/") {
         return key.to_string();
     }
-    if let Some(rest) = url.split("://").nth(1) {
-        if let Some(slash) = rest.find('/') {
+    if let Some(rest) = url.split("://").nth(1)
+        && let Some(slash) = rest.find('/') {
             return rest[slash + 1..].to_string();
         }
-    }
     url.to_string()
 }

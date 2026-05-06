@@ -237,8 +237,8 @@ pub async fn update_call_status(
         }
     }
 
-    if becomes_terminal && !was_terminal {
-        if let Some(conv_id) =
+    if becomes_terminal && !was_terminal
+        && let Some(conv_id) =
             find_direct_conversation_between(&state, call.caller_id, call.callee_id).await
         {
             let label = call_timeline_label(&req.status, &call.call_type);
@@ -260,7 +260,6 @@ pub async fn update_call_status(
                 tracing::warn!(call_id = id, error = %e, "failed to append call timeline message");
             }
         }
-    }
 
     Ok(Json(json!({ "data": { "id": id, "status": req.status } })))
 }

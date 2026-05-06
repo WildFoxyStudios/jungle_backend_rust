@@ -524,15 +524,13 @@ pub async fn add_review(
     .bind(id)
     .fetch_optional(&state.db)
     .await
-    {
-        if seller_id != auth.user_id {
+        && seller_id != auth.user_id {
             let _ = state.event_bus.publish(&DomainEvent::ProductReviewCreated {
                 product_id: id,
                 reviewer_id: auth.user_id,
                 seller_id,
             }).await;
         }
-    }
 
     Ok(Json(json!({ "data": { "reviewed": true } })))
 }

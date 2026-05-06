@@ -31,11 +31,9 @@ pub async fn list_lookups(
         .arg(&cache_key)
         .query_async::<Option<String>>(&mut redis)
         .await
-    {
-        if let Ok(value) = serde_json::from_str::<Value>(&cached) {
+        && let Ok(value) = serde_json::from_str::<Value>(&cached) {
             return Ok(Json(value));
         }
-    }
 
     let rows = sqlx::query_as::<_, LookupRow>(
         "SELECT id, lookup_type, value, label_key, icon, sort_order
