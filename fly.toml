@@ -11,6 +11,7 @@ primary_region = "mad"
   SERVER_HOST = "0.0.0.0"
   SERVER_PORT = "8080"
   RUST_LOG = "info,sqlx=warn"
+  NATS_URL = "nats://127.0.0.1:4222"
   # Internal service URLs (all point to same VM in consolidated mode)
   AUTH_SERVICE_URL = "http://localhost:3001"
   USER_SERVICE_URL = "http://localhost:3002"

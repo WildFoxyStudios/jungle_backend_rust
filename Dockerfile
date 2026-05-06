@@ -54,8 +54,14 @@ RUN cargo build --release --workspace
 FROM debian:bookworm-slim AS runtime
 
 RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates libssl3 curl tini && \
+    apt-get install -y --no-install-recommends ca-certificates libssl3 curl tini wget && \
     rm -rf /var/lib/apt/lists/*
+
+# Install NATS server (lightweight message broker for inter-service events)
+ENV NATS_VERSION=2.14.0
+RUN wget -q "https://github.com/nats-io/nats-server/releases/download/v${NATS_VERSION}/nats-server-v${NATS_VERSION}-linux-amd64.tar.gz" -O /tmp/nats.tar.gz && \
+    tar xzf /tmp/nats.tar.gz -C /usr/local/bin "nats-server-v${NATS_VERSION}-linux-amd64/nats-server" --strip-components=1 && \
+    rm /tmp/nats.tar.gz
 
 RUN groupadd --system app && useradd --system --gid app --create-home app
 
@@ -83,42 +89,49 @@ COPY --from=builder /app/migrations /app/migrations
 WORKDIR /app
 RUN mkdir -p /app/uploads && chown -R app:app /app/uploads
 
-# ── Startup script: runs all 15 services + jobs-runner ──
+# ── Startup script: runs NATS + all 15 services + jobs-runner ──
 RUN printf '#!/bin/bash\n\
 set -e\n\
 \n\
 PIDS=""\n\
 \n\
+# Start NATS server first (services depend on it)\n\
+echo "Starting nats-server on port 4222..."\n\
+nats-server -p 4222 -js &\n\
+PIDS="$PIDS $!"\n\
+sleep 1  # give NATS a moment to accept connections\n\
+\n\
 start_svc() {\n\
   local name=$1\n\
   local port=$2\n\
+  local extra_env=${3:-}\n\
   echo "Starting ${name} on port ${port}..."\n\
-  /usr/local/bin/${name} &\n\
+  env ${extra_env} SERVER_PORT="${port}" /usr/local/bin/${name} &\n\
   PIDS="$PIDS $!"\n\
 }\n\
 \n\
-# API Gateway (main entry point)\n\
+# API Gateway — runs migrations (only one that does)\n\
 start_svc api-gateway "${SERVER_PORT:-8080}"\n\
 \n\
-# Internal services\n\
-start_svc auth-service         3001\n\
-start_svc user-service         3002\n\
-start_svc post-service         3003\n\
-start_svc messaging-service    3004\n\
-start_svc media-service        3005\n\
-start_svc notification-service 3006\n\
-start_svc group-page-service   3007\n\
-start_svc content-service      3008\n\
-start_svc commerce-service     3009\n\
-start_svc admin-service        3010\n\
-start_svc payment-service      3011\n\
-start_svc realtime-service     3012\n\
-start_svc ai-service           3013\n\
-start_svc live-service         3014\n\
+# Internal services — skip migrations to avoid advisory-lock contention\n\
+start_svc auth-service         3001  SKIP_DB_MIGRATIONS=true\n\
+start_svc user-service         3002  SKIP_DB_MIGRATIONS=true\n\
+start_svc post-service         3003  SKIP_DB_MIGRATIONS=true\n\
+start_svc messaging-service    3004  SKIP_DB_MIGRATIONS=true\n\
+start_svc media-service        3005  SKIP_DB_MIGRATIONS=true\n\
+start_svc notification-service 3006  SKIP_DB_MIGRATIONS=true\n\
+start_svc group-page-service   3007  SKIP_DB_MIGRATIONS=true\n\
+start_svc content-service      3008  SKIP_DB_MIGRATIONS=true\n\
+start_svc commerce-service     3009  SKIP_DB_MIGRATIONS=true\n\
+start_svc admin-service        3010  SKIP_DB_MIGRATIONS=true\n\
+start_svc payment-service      3011  SKIP_DB_MIGRATIONS=true\n\
+start_svc realtime-service     3012  SKIP_DB_MIGRATIONS=true\n\
+start_svc ai-service           3013  SKIP_DB_MIGRATIONS=true\n\
+start_svc live-service         3014  SKIP_DB_MIGRATIONS=true\n\
 \n\
-# Background worker\n\
+# Background worker — also skips migrations\n\
 echo "Starting jobs-runner..."\n\
-/usr/local/bin/jobs-runner &\n\
+SKIP_DB_MIGRATIONS=true /usr/local/bin/jobs-runner &\n\
 PIDS="$PIDS $!"\n\
 \n\
 trap "kill $PIDS 2>/dev/null; exit 0" SIGTERM SIGINT\n\
