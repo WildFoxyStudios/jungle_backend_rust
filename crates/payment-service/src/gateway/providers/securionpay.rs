@@ -3,8 +3,8 @@ use rust_decimal::Decimal;
 use std::collections::HashMap;
 
 use crate::gateway::{
-    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus,
-    PaymentStatusKind, RefundResult, WebhookEvent,
+    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
+    RefundResult, WebhookEvent,
 };
 
 pub struct SecurionPayGateway {
@@ -52,7 +52,10 @@ impl PaymentGateway for SecurionPayGateway {
 
         if let Some(err) = result.get("error") {
             return Err(PaymentError::ProviderError(
-                err["message"].as_str().unwrap_or("SecurionPay error").to_string(),
+                err["message"]
+                    .as_str()
+                    .unwrap_or("SecurionPay error")
+                    .to_string(),
             ));
         }
 
@@ -87,14 +90,20 @@ impl PaymentGateway for SecurionPayGateway {
         Ok(PaymentStatus {
             provider_ref: result["id"].as_str().unwrap_or("").to_string(),
             status,
-            amount: result["amount"].as_i64().map(|a| Decimal::from(a) / Decimal::from(100)),
+            amount: result["amount"]
+                .as_i64()
+                .map(|a| Decimal::from(a) / Decimal::from(100)),
             currency: result["currency"].as_str().map(|s| s.to_uppercase()),
         })
     }
 
-    async fn handle_webhook(&self, payload: &[u8], _signature: &str) -> Result<WebhookEvent, PaymentError> {
-        let body: serde_json::Value =
-            serde_json::from_slice(payload).map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+    async fn handle_webhook(
+        &self,
+        payload: &[u8],
+        _signature: &str,
+    ) -> Result<WebhookEvent, PaymentError> {
+        let body: serde_json::Value = serde_json::from_slice(payload)
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         let event_type = body["type"].as_str().unwrap_or("").to_string();
         let data = &body["data"];
@@ -110,19 +119,28 @@ impl PaymentGateway for SecurionPayGateway {
             event_type,
             provider_ref: data["id"].as_str().unwrap_or("").to_string(),
             status,
-            amount: data["amount"].as_i64().map(|a| Decimal::from(a) / Decimal::from(100)),
+            amount: data["amount"]
+                .as_i64()
+                .map(|a| Decimal::from(a) / Decimal::from(100)),
             currency: data["currency"].as_str().map(|s| s.to_uppercase()),
             metadata: HashMap::new(),
         })
     }
 
-    async fn refund(&self, charge_id: &str, amount: Option<Decimal>) -> Result<RefundResult, PaymentError> {
+    async fn refund(
+        &self,
+        charge_id: &str,
+        amount: Option<Decimal>,
+    ) -> Result<RefundResult, PaymentError> {
         let mut body = serde_json::json!({
             "chargeId": charge_id
         });
 
         if let Some(amt) = amount {
-            let cents = (amt * Decimal::from(100)).to_string().parse::<i64>().unwrap_or(0);
+            let cents = (amt * Decimal::from(100))
+                .to_string()
+                .parse::<i64>()
+                .unwrap_or(0);
             body["amount"] = serde_json::json!(cents);
         }
 
@@ -138,7 +156,10 @@ impl PaymentGateway for SecurionPayGateway {
 
         if let Some(err) = result.get("error") {
             return Err(PaymentError::RefundFailed(
-                err["message"].as_str().unwrap_or("Refund failed").to_string(),
+                err["message"]
+                    .as_str()
+                    .unwrap_or("Refund failed")
+                    .to_string(),
             ));
         }
 

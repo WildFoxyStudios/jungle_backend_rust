@@ -23,6 +23,11 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/admin/reports/{id}", get(handlers::reports::get_report))
         .route("/v1/admin/reports/{id}/resolve", post(handlers::reports::resolve_report))
         .route("/v1/admin/reports/{id}/dismiss", post(handlers::reports::dismiss_report))
+        // ── Appeals & Strikes ──
+        .route("/v1/users/me/appeals", post(handlers::appeals::create_appeal))
+        .route("/v1/admin/appeals", get(handlers::appeals::list_appeals))
+        .route("/v1/admin/appeals/{id}/decide", post(handlers::appeals::decide_appeal))
+        .route("/v1/admin/strikes", post(handlers::appeals::assign_strike))
         // ── Config ──
         .route("/v1/admin/config", get(handlers::config::list_config).put(handlers::config::update_config))
         .route("/v1/admin/config/catalog", get(handlers::config_catalog::get_catalog))
@@ -164,6 +169,12 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/admin/games", get(handlers::manage_content::list_games).post(handlers::manage_content::create_game))
         .route("/v1/admin/games/{id}/toggle", post(handlers::manage_content::toggle_game))
         .route("/v1/admin/games/{id}", delete(handlers::manage_content::delete_game))
+        // ── Lookups Admin ──
+        .route("/v1/admin/lookups", get(handlers::lookups::list_lookups).post(handlers::lookups::create_lookup))
+        .route("/v1/admin/lookups/{id}", put(handlers::lookups::update_lookup).delete(handlers::lookups::delete_lookup))
+        // ── Countries Admin ──
+        .route("/v1/admin/countries", get(handlers::countries::list_countries))
+        .route("/v1/admin/countries/{id}", put(handlers::countries::update_country))
         // ── Bank Receipts ──
         .route("/v1/admin/bank-receipts", get(handlers::manage_content::list_bank_receipts))
         .route("/v1/admin/bank-receipts/{id}/approve", post(handlers::manage_content::approve_bank_receipt))
@@ -263,6 +274,22 @@ pub fn create_router(state: AppState) -> Router {
         .route("/v1/admin/cronjobs/status", get(handlers::live_and_email::cronjobs_status))
         .route("/v1/admin/cronjob-config", get(handlers::live_and_email::list_cronjob_config))
         .route("/v1/admin/cronjob-config/{name}", put(handlers::live_and_email::update_cronjob_config))
+        // ── Support Tickets ──
+        .route("/v1/admin/support/tickets", get(handlers::support_tickets::list_tickets))
+        .route("/v1/admin/support/tickets/{id}", get(handlers::support_tickets::get_ticket).put(handlers::support_tickets::update_ticket))
+        .route("/v1/admin/support/tickets/{id}/reply", post(handlers::support_tickets::reply_to_ticket))
+        // ── Help Articles ──
+        .route("/v1/admin/help/articles", get(handlers::help_articles::list_articles).post(handlers::help_articles::create_article))
+        .route("/v1/admin/help/articles/{id}", put(handlers::help_articles::update_article).delete(handlers::help_articles::delete_article))
+        // ── Webhooks Admin ──
+        .route("/v1/admin/webhooks", get(handlers::webhooks_admin::list_webhooks).post(handlers::webhooks_admin::create_webhook))
+        .route("/v1/admin/webhooks/{id}", delete(handlers::webhooks_admin::delete_webhook))
+        // ── Data Exports ──
+        .route("/v1/users/me/export", post(handlers::data_exports::request_export).get(handlers::data_exports::get_export_status))
+        .route("/v1/admin/exports", get(handlers::data_exports::list_exports))
+        // ── Memorialization ──
+        .route("/v1/admin/users/{id}/memorialize", post(handlers::data_exports::memorialize_user))
+        .route("/v1/users/me/legacy-contact", post(handlers::data_exports::set_legacy_contact))
         // ── Health ──
         .route("/v1/admin/health", get(handlers::health::admin_health))
         .route("/health", get(handlers::health::health_check))

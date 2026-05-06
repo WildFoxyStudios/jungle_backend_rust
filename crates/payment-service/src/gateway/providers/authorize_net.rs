@@ -16,18 +16,14 @@
 //!   - `AUTHORIZE_NET_WEBHOOK_SIGNATURE_KEY` — Signature key for webhook HMAC
 
 use async_trait::async_trait;
-use hmac::{Hmac, Mac};
 use rust_decimal::Decimal;
-use serde_json::{json, Value};
-use sha2::Sha512;
+use serde_json::{Value, json};
 use std::collections::HashMap;
 
 use crate::gateway::{
     PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
     RefundResult, WebhookEvent,
 };
-
-type HmacSha512 = Hmac<Sha512>;
 
 pub struct AuthorizeNetGateway {
     login_id: String,
@@ -44,8 +40,7 @@ impl AuthorizeNetGateway {
             transaction_key: std::env::var("AUTHORIZE_NET_TRANSACTION_KEY").unwrap_or_default(),
             webhook_signature_key: std::env::var("AUTHORIZE_NET_WEBHOOK_SIGNATURE_KEY")
                 .unwrap_or_default(),
-            sandbox: std::env::var("AUTHORIZE_NET_SANDBOX")
-                .unwrap_or_else(|_| "true".into())
+            sandbox: std::env::var("AUTHORIZE_NET_SANDBOX").unwrap_or_else(|_| "true".into())
                 == "true",
             client: reqwest::Client::new(),
         }
@@ -92,11 +87,8 @@ impl PaymentGateway for AuthorizeNetGateway {
     /// Create a hosted payment page token. The caller redirects the user to
     /// `hosted_page_url()` with the returned token as a form-POST field `token`.
     async fn create_session(&self, params: PaymentParams) -> Result<PaymentSession, PaymentError> {
-        let ref_id = params
-            .metadata
-            .get("order_id")
-            .cloned()
-            .unwrap_or_else(|| {
+        let ref_id =
+            params.metadata.get("order_id").cloned().unwrap_or_else(|| {
                 uuid::Uuid::new_v4().to_string().replace('-', "")[..20].to_string()
             });
 
@@ -223,8 +215,9 @@ impl PaymentGateway for AuthorizeNetGateway {
             "authorizedPendingCapture" | "capturedPendingSettlement" => PaymentStatusKind::Pending,
             "settledSuccessfully" => PaymentStatusKind::Completed,
             "refundPendingSettlement" | "refundSettledSuccessfully" => PaymentStatusKind::Refunded,
-            "voided" | "declined" | "communicationError"
-            | "settlementError" | "failedReview" => PaymentStatusKind::Failed,
+            "voided" | "declined" | "communicationError" | "settlementError" | "failedReview" => {
+                PaymentStatusKind::Failed
+            }
             _ => PaymentStatusKind::Pending,
         };
 
@@ -250,22 +243,11 @@ impl PaymentGateway for AuthorizeNetGateway {
         signature: &str,
     ) -> Result<WebhookEvent, PaymentError> {
         if !self.webhook_signature_key.is_empty() {
-            let provided = signature
-                .strip_prefix("sha512=")
-                .unwrap_or(signature)
-                .trim();
-            if provided.is_empty() {
-                return Err(PaymentError::InvalidSignature);
-            }
-
-            let mut mac = HmacSha512::new_from_slice(self.webhook_signature_key.as_bytes())
-                .map_err(|_| PaymentError::InvalidSignature)?;
-            mac.update(payload);
-            let expected = hex::encode_upper(mac.finalize().into_bytes());
-
-            if !constant_time_eq(expected.as_bytes(), provided.to_ascii_uppercase().as_bytes()) {
-                return Err(PaymentError::InvalidSignature);
-            }
+            crate::gateway::signature::verify_hmac_sha512_hex(
+                self.webhook_signature_key.as_bytes(),
+                payload,
+                signature,
+            )?;
         }
 
         let body = Self::parse_json(&String::from_utf8_lossy(payload))?;
@@ -310,7 +292,12 @@ impl PaymentGateway for AuthorizeNetGateway {
                 "transId": tx_id,
             }
         });
-        let lookup_resp = self.client.post(self.api_url()).json(&lookup).send().await?;
+        let lookup_resp = self
+            .client
+            .post(self.api_url())
+            .json(&lookup)
+            .send()
+            .await?;
         let lookup_text = lookup_resp
             .text()
             .await
@@ -398,18 +385,6 @@ impl PaymentGateway for AuthorizeNetGateway {
     }
 }
 
-/// Constant-time byte-slice equality to prevent timing attacks.
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut diff = 0u8;
-    for (x, y) in a.iter().zip(b.iter()) {
-        diff |= x ^ y;
-    }
-    diff == 0
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -419,13 +394,6 @@ mod tests {
         let raw = "\u{FEFF}{\"messages\":{\"resultCode\":\"Ok\"}}";
         let parsed = AuthorizeNetGateway::parse_json(raw).unwrap();
         assert_eq!(parsed["messages"]["resultCode"], "Ok");
-    }
-
-    #[test]
-    fn constant_time_eq_matches_ring() {
-        assert!(constant_time_eq(b"abc", b"abc"));
-        assert!(!constant_time_eq(b"abc", b"abd"));
-        assert!(!constant_time_eq(b"abc", b"ab"));
     }
 
     #[tokio::test]
@@ -441,7 +409,10 @@ mod tests {
         };
         let payload = br#"{"eventType":"net.authorize.payment.authcapture.created","payload":{"id":"60000000001","authAmount":10.50}}"#;
         let event = gw.handle_webhook(payload, "").await.unwrap();
-        assert_eq!(event.event_type, "net.authorize.payment.authcapture.created");
+        assert_eq!(
+            event.event_type,
+            "net.authorize.payment.authcapture.created"
+        );
         assert_eq!(event.provider_ref, "60000000001");
         assert_eq!(event.status, PaymentStatusKind::Completed);
     }

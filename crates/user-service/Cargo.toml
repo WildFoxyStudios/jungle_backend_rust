@@ -20,3 +20,4 @@ tracing-subscriber = { workspace = true }
 validator = { workspace = true }
 redis = { workspace = true }
 argon2 = { workspace = true }
+reqwest = { workspace = true }

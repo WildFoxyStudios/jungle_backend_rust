@@ -3,8 +3,8 @@ use rust_decimal::Decimal;
 use std::collections::HashMap;
 
 use crate::gateway::{
-    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus,
-    PaymentStatusKind, RefundResult, WebhookEvent,
+    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
+    RefundResult, WebhookEvent,
 };
 
 pub struct PayStackGateway {
@@ -68,10 +68,7 @@ impl PaymentGateway for PayStackGateway {
 
         Ok(PaymentSession {
             provider: "paystack".into(),
-            session_id: body["data"]["reference"]
-                .as_str()
-                .unwrap_or("")
-                .to_string(),
+            session_id: body["data"]["reference"].as_str().unwrap_or("").to_string(),
             redirect_url: body["data"]["authorization_url"]
                 .as_str()
                 .unwrap_or("")
@@ -82,7 +79,12 @@ impl PaymentGateway for PayStackGateway {
 
     async fn verify_payment(&self, reference: &str) -> Result<PaymentStatus, PaymentError> {
         let url = format!("https://api.paystack.co/transaction/verify/{}", reference);
-        let resp = self.client.get(&url).bearer_auth(&self.secret_key).send().await?;
+        let resp = self
+            .client
+            .get(&url)
+            .bearer_auth(&self.secret_key)
+            .send()
+            .await?;
 
         let body: serde_json::Value = resp
             .json()
@@ -126,8 +128,8 @@ impl PaymentGateway for PayStackGateway {
             return Err(PaymentError::InvalidSignature);
         }
 
-        let body: serde_json::Value =
-            serde_json::from_slice(payload).map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+        let body: serde_json::Value = serde_json::from_slice(payload)
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         let event_type = body["event"].as_str().unwrap_or("unknown").to_string();
         let data = &body["data"];
@@ -157,7 +159,10 @@ impl PaymentGateway for PayStackGateway {
     ) -> Result<RefundResult, PaymentError> {
         let mut payload = serde_json::json!({"transaction": tx_id});
         if let Some(amt) = amount {
-            let kobo = (amt * Decimal::from(100)).to_string().parse::<i64>().unwrap_or(0);
+            let kobo = (amt * Decimal::from(100))
+                .to_string()
+                .parse::<i64>()
+                .unwrap_or(0);
             payload["amount"] = serde_json::json!(kobo);
         }
 

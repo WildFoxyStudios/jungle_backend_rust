@@ -11,12 +11,7 @@ impl RateLimiter {
     }
 
     /// Check if a request is allowed. Returns Ok(remaining) or Err(retry_after_secs).
-    pub async fn check(
-        &self,
-        key: &str,
-        max_requests: u64,
-        window_secs: u64,
-    ) -> Result<u64, u64> {
+    pub async fn check(&self, key: &str, max_requests: u64, window_secs: u64) -> Result<u64, u64> {
         let mut conn = self.redis.clone();
 
         let current: u64 = conn.incr(key, 1u64).await.unwrap_or(1);
@@ -39,6 +34,11 @@ impl RateLimiter {
             (10, 900) // 10 per 15 min
         } else if path.starts_with("/v1/auth/refresh") {
             (30, 60) // 30 per min
+        } else if path.starts_with("/v1/auth/sessions") {
+            // Benign read; dev HMR + layout remounts were tripping the generic /v1/auth bucket.
+            (120, 60) // 120 per min
+        } else if path.starts_with("/v1/auth/forgot-password") {
+            (3, 900) // 3 per 15 min — prevents email bombing
         } else if path.starts_with("/v1/auth") {
             (15, 900) // 15 per 15 min
         } else if path.starts_with("/v1/media/upload") {

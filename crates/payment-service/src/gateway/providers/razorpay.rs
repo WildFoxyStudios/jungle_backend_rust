@@ -3,8 +3,8 @@ use rust_decimal::Decimal;
 use std::collections::HashMap;
 
 use crate::gateway::{
-    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus,
-    PaymentStatusKind, RefundResult, WebhookEvent,
+    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
+    RefundResult, WebhookEvent,
 };
 
 pub struct RazorpayGateway {
@@ -49,11 +49,17 @@ impl PaymentGateway for RazorpayGateway {
             .send()
             .await?;
 
-        let body: serde_json::Value = resp.json().await.map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         if body["error"].is_object() {
             return Err(PaymentError::ProviderError(
-                body["error"]["description"].as_str().unwrap_or("Unknown error").into(),
+                body["error"]["description"]
+                    .as_str()
+                    .unwrap_or("Unknown error")
+                    .into(),
             ));
         }
 
@@ -79,7 +85,10 @@ impl PaymentGateway for RazorpayGateway {
             .send()
             .await?;
 
-        let body: serde_json::Value = resp.json().await.map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         let status = match body["status"].as_str() {
             Some("paid") => PaymentStatusKind::Completed,
@@ -98,13 +107,17 @@ impl PaymentGateway for RazorpayGateway {
         })
     }
 
-    async fn handle_webhook(&self, payload: &[u8], signature: &str) -> Result<WebhookEvent, PaymentError> {
+    async fn handle_webhook(
+        &self,
+        payload: &[u8],
+        signature: &str,
+    ) -> Result<WebhookEvent, PaymentError> {
         if signature.is_empty() {
             return Err(PaymentError::InvalidSignature);
         }
 
-        let body: serde_json::Value =
-            serde_json::from_slice(payload).map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+        let body: serde_json::Value = serde_json::from_slice(payload)
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         let entity = &body["payload"]["payment"]["entity"];
         let status = match entity["status"].as_str() {
@@ -126,11 +139,18 @@ impl PaymentGateway for RazorpayGateway {
         })
     }
 
-    async fn refund(&self, tx_id: &str, amount: Option<Decimal>) -> Result<RefundResult, PaymentError> {
+    async fn refund(
+        &self,
+        tx_id: &str,
+        amount: Option<Decimal>,
+    ) -> Result<RefundResult, PaymentError> {
         let url = format!("https://api.razorpay.com/v1/payments/{}/refund", tx_id);
         let mut payload = serde_json::json!({});
         if let Some(amt) = amount {
-            let paise = (amt * Decimal::from(100)).to_string().parse::<i64>().unwrap_or(0);
+            let paise = (amt * Decimal::from(100))
+                .to_string()
+                .parse::<i64>()
+                .unwrap_or(0);
             payload["amount"] = serde_json::json!(paise);
         }
 
@@ -142,11 +162,17 @@ impl PaymentGateway for RazorpayGateway {
             .send()
             .await?;
 
-        let body: serde_json::Value = resp.json().await.map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         if body["error"].is_object() {
             return Err(PaymentError::RefundFailed(
-                body["error"]["description"].as_str().unwrap_or("Refund failed").into(),
+                body["error"]["description"]
+                    .as_str()
+                    .unwrap_or("Refund failed")
+                    .into(),
             ));
         }
 

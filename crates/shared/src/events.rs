@@ -9,59 +9,249 @@ use tracing::{error, info};
 #[serde(tag = "event", content = "data")]
 pub enum DomainEvent {
     // ── User ──
-    UserCreated { user_id: i64, username: String },
-    UserUpdated { user_id: i64, fields: Vec<String> },
-    UserDeleted { user_id: i64 },
+    UserCreated {
+        user_id: i64,
+        username: String,
+    },
+    UserUpdated {
+        user_id: i64,
+        fields: Vec<String>,
+    },
+    UserDeleted {
+        user_id: i64,
+    },
 
     // ── Social ──
-    FollowCreated { follower_id: i64, following_id: i64 },
-    FollowDeleted { follower_id: i64, following_id: i64 },
-    UserBlocked { blocker_id: i64, blocked_id: i64 },
+    FollowCreated {
+        follower_id: i64,
+        following_id: i64,
+    },
+    FollowDeleted {
+        follower_id: i64,
+        following_id: i64,
+    },
+    UserBlocked {
+        blocker_id: i64,
+        blocked_id: i64,
+    },
 
     // ── Posts ──
-    PostCreated { post_id: i64, user_id: i64, group_id: Option<i64>, page_id: Option<i64> },
-    PostDeleted { post_id: i64 },
-    PostLiked { post_id: i64, user_id: i64, author_id: i64, reaction_type: String },
+    PostCreated {
+        post_id: i64,
+        user_id: i64,
+        group_id: Option<i64>,
+        page_id: Option<i64>,
+    },
+    PostDeleted {
+        post_id: i64,
+    },
+    PostLiked {
+        post_id: i64,
+        user_id: i64,
+        author_id: i64,
+        reaction_type: String,
+    },
 
     // ── Comments ──
-    CommentCreated { comment_id: i64, post_id: i64, user_id: i64, author_id: i64 },
+    CommentCreated {
+        comment_id: i64,
+        post_id: i64,
+        user_id: i64,
+        author_id: i64,
+    },
+    /// `@username` in post/reel caption body (resolved to user ids server-side).
+    UserMentionedInPost {
+        post_id: i64,
+        mentioner_id: i64,
+        mentioned_user_id: i64,
+    },
 
     // ── Messaging ──
-    MessageSent { conversation_id: i64, sender_id: i64, recipient_ids: Vec<i64> },
-    MessageRead { conversation_id: i64, user_id: i64 },
-    TypingStarted { conversation_id: i64, user_id: i64 },
-    TypingStopped { conversation_id: i64, user_id: i64 },
+    MessageSent {
+        conversation_id: i64,
+        sender_id: i64,
+        recipient_ids: Vec<i64>,
+    },
+    MessageRead {
+        conversation_id: i64,
+        user_id: i64,
+    },
+    TypingStarted {
+        conversation_id: i64,
+        user_id: i64,
+    },
+    TypingStopped {
+        conversation_id: i64,
+        user_id: i64,
+    },
 
     // ── Groups / Pages ──
-    GroupJoined { group_id: i64, user_id: i64 },
-    GroupLeft { group_id: i64, user_id: i64 },
-    PageLiked { page_id: i64, user_id: i64 },
+    GroupJoined {
+        group_id: i64,
+        user_id: i64,
+    },
+    GroupLeft {
+        group_id: i64,
+        user_id: i64,
+    },
+    PageLiked {
+        page_id: i64,
+        user_id: i64,
+    },
 
     // ── Stories ──
-    StoryCreated { story_id: i64, user_id: i64 },
+    StoryCreated {
+        story_id: i64,
+        user_id: i64,
+    },
 
     // ── Calls ──
-    CallStarted { call_id: i64, caller_id: i64, callee_id: i64, call_type: String },
-    CallAnswered { call_id: i64 },
-    CallEnded { call_id: i64 },
+    CallStarted {
+        call_id: i64,
+        caller_id: i64,
+        callee_id: i64,
+        call_type: String,
+    },
+    CallAnswered {
+        call_id: i64,
+    },
+    CallEnded {
+        call_id: i64,
+    },
 
     // ── Payments ──
-    PaymentCompleted { transaction_id: i64, user_id: i64, amount: String, tx_type: String },
+    PaymentCompleted {
+        transaction_id: i64,
+        user_id: i64,
+        amount: String,
+        tx_type: String,
+    },
 
     // ── Live ──
-    LiveStreamStarted { stream_id: i64, user_id: i64 },
-    LiveStreamEnded { stream_id: i64, user_id: i64 },
+    LiveStreamStarted {
+        stream_id: i64,
+        user_id: i64,
+    },
+    LiveStreamEnded {
+        stream_id: i64,
+        user_id: i64,
+    },
 
     // ── Notifications ──
-    NotificationCreated { recipient_id: i64, notification_type: String, sender_id: Option<i64> },
+    NotificationCreated {
+        recipient_id: i64,
+        notification_type: String,
+        sender_id: Option<i64>,
+    },
 
     // ── Presence ──
-    PresenceOnline { user_id: i64 },
-    PresenceOffline { user_id: i64 },
+    PresenceOnline {
+        user_id: i64,
+    },
+    PresenceOffline {
+        user_id: i64,
+    },
+
+    // ── Profile mutations (fan-out to followers/self sessions) ──
+    AvatarChanged {
+        user_id: i64,
+        url: String,
+    },
+    NameChanged {
+        user_id: i64,
+        first_name: String,
+        last_name: String,
+    },
+
+    // ── Social (follow requests lifecycle, distinct from FollowCreated) ──
+    FollowRequestCreated {
+        recipient_id: i64,
+        requester_id: i64,
+    },
+    FollowRequestRemoved {
+        recipient_id: i64,
+        requester_id: i64,
+    },
+
+    // ── Counters ──
+    UnreadCountChanged {
+        user_id: i64,
+        messages: i32,
+        notifications: i32,
+    },
+
+    // ── Chat customisation ──
+    ChatColorChanged {
+        conversation_id: i64,
+        user_id: i64,
+        color: String,
+    },
+
+    // ── Feed domain granular ──
+    ReactionRegistered {
+        post_id: i64,
+        user_id: i64,
+        reaction: String,
+    },
+    NewPostsAvailable {
+        feed_scope: String,
+        count: i32,
+    },
+    CommentReplyCreated {
+        parent_comment_id: i64,
+        comment_id: i64,
+        post_id: i64,
+    },
 
     // ── Admin ──
-    AdminNotice { text: String, target: String },
-    NewsletterQueued { subject: String, recipient_count: i64 },
+    AdminNotice {
+        text: String,
+        target: String,
+    },
+    NewsletterQueued {
+        subject: String,
+        recipient_count: i64,
+    },
+
+    // ── Commerce ──
+    JobApplicationSubmitted {
+        job_id: i64,
+        applicant_id: i64,
+        employer_id: i64,
+    },
+    ApplicationStatusChanged {
+        application_id: i64,
+        job_id: i64,
+        applicant_id: i64,
+        new_status: String,
+    },
+    OrderCreated {
+        order_id: i64,
+        buyer_id: i64,
+        seller_id: i64,
+    },
+    OrderStatusChanged {
+        order_id: i64,
+        buyer_id: i64,
+        seller_id: i64,
+        new_status: String,
+    },
+    FundingDonation {
+        funding_id: i64,
+        donor_id: i64,
+        creator_id: i64,
+        amount: String,
+    },
+    FundingGoalReached {
+        funding_id: i64,
+        creator_id: i64,
+        goal_amount: String,
+    },
+    ProductReviewCreated {
+        product_id: i64,
+        reviewer_id: i64,
+        seller_id: i64,
+    },
 }
 
 impl DomainEvent {
@@ -78,6 +268,7 @@ impl DomainEvent {
             Self::PostDeleted { .. } => "events.post.deleted",
             Self::PostLiked { .. } => "events.post.liked",
             Self::CommentCreated { .. } => "events.post.commented",
+            Self::UserMentionedInPost { .. } => "events.post.mention",
             Self::MessageSent { .. } => "events.message.sent",
             Self::MessageRead { .. } => "events.message.read",
             Self::TypingStarted { .. } => "events.typing.start",
@@ -95,8 +286,24 @@ impl DomainEvent {
             Self::NotificationCreated { .. } => "events.notification.created",
             Self::PresenceOnline { .. } => "events.presence.online",
             Self::PresenceOffline { .. } => "events.presence.offline",
+            Self::AvatarChanged { .. } => "events.user.avatar_changed",
+            Self::NameChanged { .. } => "events.user.name_changed",
+            Self::FollowRequestCreated { .. } => "events.follow.request_created",
+            Self::FollowRequestRemoved { .. } => "events.follow.request_removed",
+            Self::UnreadCountChanged { .. } => "events.user.unread_changed",
+            Self::ChatColorChanged { .. } => "events.conversation.color_changed",
+            Self::ReactionRegistered { .. } => "events.post.reaction_registered",
+            Self::NewPostsAvailable { .. } => "events.feed.new_posts",
+            Self::CommentReplyCreated { .. } => "events.comment.reply_created",
             Self::AdminNotice { .. } => "events.admin.notice",
             Self::NewsletterQueued { .. } => "events.admin.newsletter",
+            Self::JobApplicationSubmitted { .. } => "events.commerce.job_application",
+            Self::ApplicationStatusChanged { .. } => "events.commerce.application_status",
+            Self::OrderCreated { .. } => "events.commerce.order_created",
+            Self::OrderStatusChanged { .. } => "events.commerce.order_status",
+            Self::FundingDonation { .. } => "events.commerce.funding_donation",
+            Self::FundingGoalReached { .. } => "events.commerce.funding_goal_reached",
+            Self::ProductReviewCreated { .. } => "events.commerce.product_review",
         }
     }
 }
@@ -170,8 +377,8 @@ impl NatsEventBus {
 #[async_trait]
 impl EventBus for NatsEventBus {
     async fn publish(&self, event: &DomainEvent) -> Result<(), EventBusError> {
-        let payload = serde_json::to_vec(event)
-            .map_err(|e| EventBusError::Serialization(e.to_string()))?;
+        let payload =
+            serde_json::to_vec(event).map_err(|e| EventBusError::Serialization(e.to_string()))?;
         let subject = event.subject();
 
         // Retry up to 3 times with exponential backoff
@@ -213,6 +420,32 @@ impl EventBus for NatsEventBus {
     }
 }
 
+/// Connect to NATS (or return a `NoopEventBus` fallback). Crashes when
+/// `NATS_REQUIRED=true` and the connection fails — use this in production
+/// to prevent silent event loss.
+pub async fn connect_event_bus(nats_url: &str) -> std::sync::Arc<dyn EventBus> {
+    match NatsEventBus::connect(nats_url).await {
+        Ok(bus) => std::sync::Arc::new(bus),
+        Err(e) => {
+            let required = std::env::var("NATS_REQUIRED")
+                .unwrap_or_else(|_| "true".into())
+                .eq_ignore_ascii_case("true");
+            if required {
+                tracing::error!(
+                    error = %e,
+                    "NATS is REQUIRED but unavailable — crashing to prevent silent event loss"
+                );
+                std::process::exit(1);
+            }
+            tracing::error!(
+                error = %e,
+                "NATS unavailable — using NoopEventBus (inter-service events will NOT be delivered)"
+            );
+            std::sync::Arc::new(NoopEventBus)
+        }
+    }
+}
+
 /// No-op event bus for tests or when NATS is not configured.
 #[derive(Clone)]
 pub struct NoopEventBus;
@@ -223,7 +456,9 @@ impl EventBus for NoopEventBus {
         Ok(())
     }
     async fn subscribe(&self, _subject: &str) -> Result<EventSubscription, EventBusError> {
-        Err(EventBusError::Connection("NoopEventBus does not support subscriptions".into()))
+        Err(EventBusError::Connection(
+            "NoopEventBus does not support subscriptions".into(),
+        ))
     }
     async fn publish_raw(&self, _subject: &str, _payload: &[u8]) -> Result<(), EventBusError> {
         Ok(())

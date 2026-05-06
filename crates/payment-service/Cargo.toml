@@ -24,9 +24,11 @@ async-trait = { workspace = true }
 reqwest = { workspace = true }
 thiserror = { workspace = true }
 hmac = { workspace = true }
+sha1 = { workspace = true }
 sha2 = { workspace = true }
 hex = "0.4"
 base64 = { workspace = true }
 md5 = { workspace = true }
 serde_urlencoded = { workspace = true }
 urlencoding = { workspace = true }
+async-stripe = { workspace = true }

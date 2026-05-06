@@ -49,7 +49,12 @@ impl I18nService {
 
     /// Get all translations for a language
     pub async fn get_all_for_lang(&self, lang: &str) -> LangMap {
-        self.cache.read().await.get(lang).cloned().unwrap_or_default()
+        self.cache
+            .read()
+            .await
+            .get(lang)
+            .cloned()
+            .unwrap_or_default()
     }
 
     /// List all available languages

@@ -3,8 +3,8 @@ use rust_decimal::Decimal;
 use std::collections::HashMap;
 
 use crate::gateway::{
-    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus,
-    PaymentStatusKind, RefundResult, WebhookEvent,
+    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
+    RefundResult, WebhookEvent,
 };
 
 pub struct FortumoGateway {
@@ -76,22 +76,28 @@ impl PaymentGateway for FortumoGateway {
         })
     }
 
-    async fn handle_webhook(&self, payload: &[u8], signature: &str) -> Result<WebhookEvent, PaymentError> {
+    async fn handle_webhook(
+        &self,
+        payload: &[u8],
+        signature: &str,
+    ) -> Result<WebhookEvent, PaymentError> {
         let form: HashMap<String, String> = serde_urlencoded::from_bytes(payload)
             .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         // Verify Fortumo signature: md5(sorted params + secret)
         if !self.secret.is_empty() {
-            let mut sorted_keys: Vec<&String> = form.keys()
-                .filter(|k| k.as_str() != "sig")
-                .collect();
+            let mut sorted_keys: Vec<&String> =
+                form.keys().filter(|k| k.as_str() != "sig").collect();
             sorted_keys.sort();
             let sig_string: String = sorted_keys
                 .iter()
                 .map(|k| form.get(*k).cloned().unwrap_or_default())
                 .collect::<Vec<_>>()
                 .join("");
-            let expected = format!("{:x}", md5::compute(format!("{}{}", sig_string, self.secret)));
+            let expected = format!(
+                "{:x}",
+                md5::compute(format!("{}{}", sig_string, self.secret))
+            );
             if let Some(provided) = form.get("sig")
                 && *provided != expected
                 && !signature.is_empty()
@@ -117,7 +123,11 @@ impl PaymentGateway for FortumoGateway {
         })
     }
 
-    async fn refund(&self, _tx_id: &str, _amount: Option<Decimal>) -> Result<RefundResult, PaymentError> {
+    async fn refund(
+        &self,
+        _tx_id: &str,
+        _amount: Option<Decimal>,
+    ) -> Result<RefundResult, PaymentError> {
         // Fortumo carrier billing does not support automated refunds
         Err(PaymentError::ProviderError(
             "Fortumo carrier billing does not support automated refunds".to_string(),

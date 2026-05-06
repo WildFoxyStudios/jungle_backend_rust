@@ -1,5 +1,5 @@
-use image::imageops::FilterType;
 use image::GenericImageView;
+use image::imageops::FilterType;
 
 pub struct ImageProcessResult {
     pub data: Vec<u8>,
@@ -59,7 +59,11 @@ pub fn generate_thumbnail(data: &[u8], size: u32) -> Result<ImageProcessResult, 
     })
 }
 
-pub fn crop_center(data: &[u8], target_width: u32, target_height: u32) -> Result<ImageProcessResult, String> {
+pub fn crop_center(
+    data: &[u8],
+    target_width: u32,
+    target_height: u32,
+) -> Result<ImageProcessResult, String> {
     let img = image::load_from_memory(data).map_err(|e| format!("Image decode error: {}", e))?;
     let (w, h) = img.dimensions();
 

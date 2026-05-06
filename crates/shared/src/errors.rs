@@ -1,7 +1,7 @@
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 use serde_json::json;
 
@@ -30,6 +30,9 @@ pub enum ApiError {
 
     #[error("Internal server error: {0}")]
     Internal(String),
+
+    #[error("Bad gateway: {0}")]
+    BadGateway(String),
 }
 
 #[derive(Debug, serde::Serialize)]
@@ -41,9 +44,25 @@ pub struct FieldError {
 impl IntoResponse for ApiError {
     fn into_response(self) -> Response {
         let (status, code, message, details) = match &self {
-            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, "BAD_REQUEST", msg.clone(), None),
-            ApiError::Unauthorized => (StatusCode::UNAUTHORIZED, "UNAUTHORIZED", "Authentication required".into(), None),
-            ApiError::Forbidden(msg) => (StatusCode::FORBIDDEN, "FORBIDDEN", if msg.is_empty() { "Access denied".into() } else { msg.clone() }, None),
+            ApiError::BadRequest(msg) => {
+                (StatusCode::BAD_REQUEST, "BAD_REQUEST", msg.clone(), None)
+            }
+            ApiError::Unauthorized => (
+                StatusCode::UNAUTHORIZED,
+                "UNAUTHORIZED",
+                "Authentication required".into(),
+                None,
+            ),
+            ApiError::Forbidden(msg) => (
+                StatusCode::FORBIDDEN,
+                "FORBIDDEN",
+                if msg.is_empty() {
+                    "Access denied".into()
+                } else {
+                    msg.clone()
+                },
+                None,
+            ),
             ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, "NOT_FOUND", msg.clone(), None),
             ApiError::Conflict(msg) => (StatusCode::CONFLICT, "CONFLICT", msg.clone(), None),
             ApiError::Validation(errors) => (
@@ -52,10 +71,24 @@ impl IntoResponse for ApiError {
                 "Invalid input".into(),
                 Some(serde_json::to_value(errors).unwrap_or_default()),
             ),
-            ApiError::RateLimited => (StatusCode::TOO_MANY_REQUESTS, "RATE_LIMITED", "Too many requests".into(), None),
+            ApiError::RateLimited => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "RATE_LIMITED",
+                "Too many requests".into(),
+                None,
+            ),
             ApiError::Internal(msg) => {
                 tracing::error!("Internal error: {}", msg);
-                (StatusCode::INTERNAL_SERVER_ERROR, "INTERNAL_ERROR", "Internal server error".into(), None)
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "Internal server error".into(),
+                    None,
+                )
+            }
+            ApiError::BadGateway(msg) => {
+                tracing::warn!("Upstream provider error: {}", msg);
+                (StatusCode::BAD_GATEWAY, "BAD_GATEWAY", msg.clone(), None)
             }
         };
 
@@ -113,7 +146,11 @@ impl From<validator::ValidationErrors> for ApiError {
             .flat_map(|(field, errs)| {
                 errs.iter().map(move |err| FieldError {
                     field: field.to_string(),
-                    message: err.message.as_ref().map(|m| m.to_string()).unwrap_or_else(|| format!("Invalid {}", field)),
+                    message: err
+                        .message
+                        .as_ref()
+                        .map(|m| m.to_string())
+                        .unwrap_or_else(|| format!("Invalid {}", field)),
                 })
             })
             .collect();

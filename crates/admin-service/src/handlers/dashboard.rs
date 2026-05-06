@@ -3,15 +3,14 @@ use serde_json::{json, Value};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
+    permissions::Permission,
 };
 
 pub async fn stats(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
-    if !auth.is_admin {
-        return Err(ApiError::Forbidden("".into()));
-    }
+    auth.require_permission(Permission::ViewDashboard, &state).await?;
 
     // ── Core counts ──
     let total_users: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users")

@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -82,16 +82,17 @@ pub async fn group_posts(
 
     if !is_member {
         // Check if group is public
-        let is_public: bool = sqlx::query_scalar(
-            "SELECT privacy = 'public' FROM groups WHERE id = $1",
-        )
-        .bind(id)
-        .fetch_one(&state.db)
-        .await
-        .unwrap_or(false);
+        let is_public: bool =
+            sqlx::query_scalar("SELECT privacy = 'public' FROM groups WHERE id = $1")
+                .bind(id)
+                .fetch_one(&state.db)
+                .await
+                .unwrap_or(false);
 
         if !is_public {
-            return Err(ApiError::Forbidden("Must be a member to view group posts".into()));
+            return Err(ApiError::Forbidden(
+                "Must be a member to view group posts".into(),
+            ));
         }
     }
 
@@ -231,14 +232,12 @@ pub async fn update_page_avatar(
     Path(id): Path<i64>,
     Json(req): Json<AvatarCoverRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let result = sqlx::query(
-        "UPDATE pages SET avatar = $3 WHERE page_id = $1 AND user_id = $2",
-    )
-    .bind(id)
-    .bind(auth.user_id)
-    .bind(&req.url)
-    .execute(&state.db)
-    .await?;
+    let result = sqlx::query("UPDATE pages SET avatar = $3 WHERE page_id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(auth.user_id)
+        .bind(&req.url)
+        .execute(&state.db)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound("Page not found or access denied".into()));
@@ -254,14 +253,12 @@ pub async fn update_page_cover(
     Path(id): Path<i64>,
     Json(req): Json<AvatarCoverRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let result = sqlx::query(
-        "UPDATE pages SET cover = $3 WHERE page_id = $1 AND user_id = $2",
-    )
-    .bind(id)
-    .bind(auth.user_id)
-    .bind(&req.url)
-    .execute(&state.db)
-    .await?;
+    let result = sqlx::query("UPDATE pages SET cover = $3 WHERE page_id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(auth.user_id)
+        .bind(&req.url)
+        .execute(&state.db)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound("Page not found or access denied".into()));
@@ -342,17 +339,17 @@ pub async fn update_event_cover(
     Path(id): Path<i64>,
     Json(req): Json<AvatarCoverRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let result = sqlx::query(
-        "UPDATE events SET cover = $3 WHERE id = $1 AND organizer_id = $2",
-    )
-    .bind(id)
-    .bind(auth.user_id)
-    .bind(&req.url)
-    .execute(&state.db)
-    .await?;
+    let result = sqlx::query("UPDATE events SET cover = $3 WHERE id = $1 AND organizer_id = $2")
+        .bind(id)
+        .bind(auth.user_id)
+        .bind(&req.url)
+        .execute(&state.db)
+        .await?;
 
     if result.rows_affected() == 0 {
-        return Err(ApiError::NotFound("Event not found or access denied".into()));
+        return Err(ApiError::NotFound(
+            "Event not found or access denied".into(),
+        ));
     }
 
     Ok(Json(json!({ "data": { "cover": req.url } })))
@@ -366,24 +363,21 @@ pub async fn boost_page(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let is_pro = sqlx::query_scalar::<_, i32>(
-        "SELECT is_pro FROM users WHERE id = $1",
-    )
-    .bind(auth.user_id)
-    .fetch_one(&state.db)
-    .await?;
+    let is_pro = sqlx::query_scalar::<_, i32>("SELECT is_pro FROM users WHERE id = $1")
+        .bind(auth.user_id)
+        .fetch_one(&state.db)
+        .await?;
 
     if is_pro == 0 {
         return Err(ApiError::Forbidden("Pro subscription required".into()));
     }
 
-    let result = sqlx::query(
-        "UPDATE pages SET is_boosted = TRUE WHERE page_id = $1 AND user_id = $2",
-    )
-    .bind(id)
-    .bind(auth.user_id)
-    .execute(&state.db)
-    .await?;
+    let result =
+        sqlx::query("UPDATE pages SET is_boosted = TRUE WHERE page_id = $1 AND user_id = $2")
+            .bind(id)
+            .bind(auth.user_id)
+            .execute(&state.db)
+            .await?;
 
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound("Page not found or access denied".into()));
@@ -542,9 +536,15 @@ pub async fn list_page_ratings(
     let data: Vec<_> = rows.into_iter().take(limit as usize).map(|(rid, uid, username, first_name, avatar, rating, review, created_at)| {
         json!({ "id": rid, "user_id": uid, "username": username, "first_name": first_name, "avatar": avatar, "rating": rating, "review": review, "created_at": created_at })
     }).collect();
-    let next_cursor = if has_more { last_id.map(|i| i.to_string()) } else { None };
+    let next_cursor = if has_more {
+        last_id.map(|i| i.to_string())
+    } else {
+        None
+    };
 
-    Ok(Json(json!({ "data": data, "meta": { "cursor": next_cursor, "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": data, "meta": { "cursor": next_cursor, "has_more": has_more } }),
+    ))
 }
 
 /// GET /v1/groups/check-name?name=mygroup&group_id=5 — Check group name availability (PHP: check_groupname.php)
@@ -556,7 +556,9 @@ pub async fn check_group_name(
     let name = params.name.trim().to_lowercase();
 
     if name.len() < 5 {
-        return Ok(Json(json!({ "data": { "available": false, "reason": "min_length_5" } })));
+        return Ok(Json(
+            json!({ "data": { "available": false, "reason": "min_length_5" } }),
+        ));
     }
 
     let exists: bool = sqlx::query_scalar(
@@ -579,7 +581,9 @@ pub async fn check_page_name(
     let name = params.name.trim().to_lowercase();
 
     if name.len() < 5 {
-        return Ok(Json(json!({ "data": { "available": false, "reason": "min_length_5" } })));
+        return Ok(Json(
+            json!({ "data": { "available": false, "reason": "min_length_5" } }),
+        ));
     }
 
     let exists: bool = sqlx::query_scalar(

@@ -669,7 +669,7 @@ pub async fn get_settings_category(
 ) -> Result<Json<Value>, ApiError> {
     require_admin(&auth)?;
 
-    let valid = ["auto_delete","push","ai","store","affiliates","pro","website_mode","ads"];
+    let valid = ["auto_delete","push","ai","store","affiliates","pro","website_mode","ads","third_party"];
     if !valid.contains(&category.as_str()) {
         return Err(ApiError::BadRequest(format!("Unknown settings category: {}", category)));
     }
@@ -700,7 +700,7 @@ pub async fn update_settings_category(
 ) -> Result<Json<Value>, ApiError> {
     require_admin(&auth)?;
 
-    let valid = ["auto_delete","push","ai","store","affiliates","pro","website_mode","ads"];
+    let valid = ["auto_delete","push","ai","store","affiliates","pro","website_mode","ads","third_party"];
     if !valid.contains(&category.as_str()) {
         return Err(ApiError::BadRequest(format!("Unknown settings category: {}", category)));
     }

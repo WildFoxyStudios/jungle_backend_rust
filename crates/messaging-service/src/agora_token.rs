@@ -10,7 +10,7 @@
 //! where msg = salt(u32) | ts(u32) | n_privs(u16) | [ priv(u16) | expire(u32) ]...
 //! ```
 
-use base64::{engine::general_purpose::STANDARD as B64, Engine};
+use base64::{Engine, engine::general_purpose::STANDARD as B64};
 use hmac::{Hmac, Mac};
 use rand::Rng;
 use sha2::Sha256;
@@ -55,7 +55,11 @@ pub fn build(
         return Err("app_id and app_certificate required".into());
     }
 
-    let uid_str = if uid == 0 { String::new() } else { uid.to_string() };
+    let uid_str = if uid == 0 {
+        String::new()
+    } else {
+        uid.to_string()
+    };
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -121,8 +125,14 @@ mod tests {
     fn token_starts_with_version_and_app_id() {
         let app_id = "aabbccddeeff11223344556677889900";
         let token = build(app_id, "cert", "my-channel", 42, Role::Publisher, 3600).unwrap();
-        assert!(token.starts_with("006"), "token must start with version prefix");
-        assert!(token[3..].starts_with(app_id), "token must embed app_id after version");
+        assert!(
+            token.starts_with("006"),
+            "token must start with version prefix"
+        );
+        assert!(
+            token[3..].starts_with(app_id),
+            "token must embed app_id after version"
+        );
         assert!(token.len() > 3 + app_id.len() + 10, "content must follow");
     }
 
@@ -151,9 +161,28 @@ mod tests {
         // Subscriber role embeds only the JoinChannel privilege (1 pair) while
         // Publisher embeds 4 (JoinChannel + PublishAudio/Video/Data). The message
         // payload size differs, so tokens must differ even with identical salts.
-        let pub_tok = build("aabbccddeeff11223344556677889900", "cert", "c", 42, Role::Publisher, 3600).unwrap();
-        let sub_tok = build("aabbccddeeff11223344556677889900", "cert", "c", 42, Role::Subscriber, 3600).unwrap();
-        assert_ne!(pub_tok, sub_tok, "publisher and subscriber tokens must differ");
+        let pub_tok = build(
+            "aabbccddeeff11223344556677889900",
+            "cert",
+            "c",
+            42,
+            Role::Publisher,
+            3600,
+        )
+        .unwrap();
+        let sub_tok = build(
+            "aabbccddeeff11223344556677889900",
+            "cert",
+            "c",
+            42,
+            Role::Subscriber,
+            3600,
+        )
+        .unwrap();
+        assert_ne!(
+            pub_tok, sub_tok,
+            "publisher and subscriber tokens must differ"
+        );
         // The subscriber token must still start with the version + app_id prefix.
         assert!(sub_tok.starts_with("006aabbccddeeff11223344556677889900"));
     }

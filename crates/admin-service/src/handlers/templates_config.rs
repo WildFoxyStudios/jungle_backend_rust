@@ -7,6 +7,7 @@ use serde_json::{json, Value};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
+    permissions::Permission,
 };
 use sqlx::FromRow;
 
@@ -45,9 +46,10 @@ pub async fn list_colored_post_templates(
 /// POST /v1/admin/colored-posts — create a colored post template
 pub async fn create_colored_post_template(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Json(req): Json<CreateColoredPostTemplateRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ManageSettings, &state).await?;
     let template = sqlx::query_as::<_, ColoredPostTemplateRow>(
         r#"
         INSERT INTO colored_post_templates (color_1, color_2, text_color, image)
@@ -68,10 +70,11 @@ pub async fn create_colored_post_template(
 /// PUT /v1/admin/colored-posts/{id} — update a template
 pub async fn update_colored_post_template(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(id): Path<i64>,
     Json(req): Json<CreateColoredPostTemplateRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ManageSettings, &state).await?;
     let result = sqlx::query(
         r#"
         UPDATE colored_post_templates
@@ -99,9 +102,10 @@ pub async fn update_colored_post_template(
 /// DELETE /v1/admin/colored-posts/{id} — delete a template
 pub async fn delete_colored_post_template(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ManageSettings, &state).await?;
     let result = sqlx::query("DELETE FROM colored_post_templates WHERE id = $1")
         .bind(id)
         .execute(&state.db)
@@ -147,9 +151,10 @@ pub async fn list_reaction_types(
 /// POST /v1/admin/reaction-types — create a reaction type
 pub async fn create_reaction_type(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Json(req): Json<CreateReactionTypeRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ManageSettings, &state).await?;
     let rt = sqlx::query_as::<_, ReactionTypeRow>(
         r#"
         INSERT INTO reaction_types (name, icon, is_active)
@@ -169,10 +174,11 @@ pub async fn create_reaction_type(
 /// PUT /v1/admin/reaction-types/{id} — update a reaction type
 pub async fn update_reaction_type(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(id): Path<i64>,
     Json(req): Json<CreateReactionTypeRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ManageSettings, &state).await?;
     let result = sqlx::query(
         "UPDATE reaction_types SET name = $1, icon = $2, is_active = $3 WHERE id = $4",
     )
@@ -193,9 +199,10 @@ pub async fn update_reaction_type(
 /// DELETE /v1/admin/reaction-types/{id} — delete a reaction type
 pub async fn delete_reaction_type(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ManageSettings, &state).await?;
     let result = sqlx::query("DELETE FROM reaction_types WHERE id = $1")
         .bind(id)
         .execute(&state.db)

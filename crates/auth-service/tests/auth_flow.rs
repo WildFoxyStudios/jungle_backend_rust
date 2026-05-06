@@ -17,7 +17,10 @@ use serde_json::json;
 const BASE: &str = "http://127.0.0.1:3001";
 
 fn client() -> reqwest::Client {
-    reqwest::Client::builder().timeout(std::time::Duration::from_secs(5)).build().unwrap()
+    reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap()
 }
 
 #[tokio::test]
@@ -65,7 +68,11 @@ async fn register_and_login_flow() {
         .await
         .expect("login req");
 
-    assert!(login.status().is_success(), "login failed: {}", login.status());
+    assert!(
+        login.status().is_success(),
+        "login failed: {}",
+        login.status()
+    );
     let body: serde_json::Value = login.json().await.unwrap();
     let token = body["data"]["access_token"].as_str().unwrap();
 

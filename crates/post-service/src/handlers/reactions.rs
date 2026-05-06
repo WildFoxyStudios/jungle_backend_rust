@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use serde::Deserialize;
 use shared::{
@@ -54,13 +54,26 @@ pub async fn react_to_post(
         .flatten();
 
     if let Some(aid) = author_id {
-        let _ = state.event_bus.publish(&DomainEvent::PostLiked {
+        let _ = state
+            .event_bus
+            .publish(&DomainEvent::PostLiked {
+                post_id,
+                user_id: auth.user_id,
+                author_id: aid,
+                reaction_type: reaction_type.to_string(),
+            })
+            .await;
+    }
+
+    // Granular signal for live UI updates (badge counters, animations).
+    let _ = state
+        .event_bus
+        .publish(&DomainEvent::ReactionRegistered {
             post_id,
             user_id: auth.user_id,
-            author_id: aid,
-            reaction_type: reaction_type.to_string(),
-        }).await;
-    }
+            reaction: reaction_type.to_string(),
+        })
+        .await;
 
     Ok(Json(serde_json::json!({
         "data": { "reaction_type": reaction_type, "post_id": post_id }
@@ -72,11 +85,13 @@ pub async fn unreact_to_post(
     auth: AuthUser,
     Path(post_id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    sqlx::query("DELETE FROM reactions WHERE user_id = $1 AND target_type = 'post' AND target_id = $2")
-        .bind(auth.user_id)
-        .bind(post_id)
-        .execute(&state.db)
-        .await?;
+    sqlx::query(
+        "DELETE FROM reactions WHERE user_id = $1 AND target_type = 'post' AND target_id = $2",
+    )
+    .bind(auth.user_id)
+    .bind(post_id)
+    .execute(&state.db)
+    .await?;
 
     sqlx::query(
         "UPDATE posts SET like_count = (SELECT COUNT(*) FROM reactions WHERE target_type = 'post' AND target_id = $1) WHERE id = $1",
@@ -119,5 +134,30 @@ pub async fn react_to_comment(
 
     Ok(Json(serde_json::json!({
         "data": { "reaction_type": reaction_type, "comment_id": comment_id }
+    })))
+}
+
+pub async fn unreact_to_comment(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(comment_id): Path<i64>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    sqlx::query(
+        "DELETE FROM reactions WHERE user_id = $1 AND target_type = 'comment' AND target_id = $2",
+    )
+    .bind(auth.user_id)
+    .bind(comment_id)
+    .execute(&state.db)
+    .await?;
+
+    sqlx::query(
+        "UPDATE comments SET like_count = (SELECT COUNT(*) FROM reactions WHERE target_type = 'comment' AND target_id = $1) WHERE id = $1",
+    )
+    .bind(comment_id)
+    .execute(&state.db)
+    .await?;
+
+    Ok(Json(serde_json::json!({
+        "data": { "message": "Reaction removed" }
     })))
 }

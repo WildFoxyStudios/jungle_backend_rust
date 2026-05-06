@@ -16,6 +16,7 @@ use shared::{
     auth::{AppState, AuthUser},
     crypto,
     errors::ApiError,
+    permissions::Permission,
 };
 use uuid;
 
@@ -66,9 +67,7 @@ pub async fn list_storage(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
-    if !auth.is_admin {
-        return Err(ApiError::Forbidden("Admin only".into()));
-    }
+    auth.require_permission(Permission::ManageStorage, &state).await?;
 
     let rows: Vec<StorageProviderRow> = sqlx::query_as(
         r#"SELECT id, name, provider_type, bucket, endpoint, region,
@@ -87,9 +86,7 @@ pub async fn create_storage(
     auth: AuthUser,
     Json(req): Json<CreateStorageRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    if !auth.is_admin {
-        return Err(ApiError::Forbidden("Admin only".into()));
-    }
+    auth.require_permission(Permission::ManageStorage, &state).await?;
 
     if req.secret_key.trim().is_empty() {
         return Err(ApiError::BadRequest("secret_key required".into()));
@@ -127,9 +124,7 @@ pub async fn update_storage(
     Path(id): Path<i64>,
     Json(req): Json<UpdateStorageRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    if !auth.is_admin {
-        return Err(ApiError::Forbidden("Admin only".into()));
-    }
+    auth.require_permission(Permission::ManageStorage, &state).await?;
 
     let enc_key = enc_key_from_env();
 
@@ -178,9 +173,7 @@ pub async fn delete_storage(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    if !auth.is_admin {
-        return Err(ApiError::Forbidden("Admin only".into()));
-    }
+    auth.require_permission(Permission::ManageStorage, &state).await?;
     sqlx::query("DELETE FROM storage_providers WHERE id = $1")
         .bind(id)
         .execute(&state.db)
@@ -193,9 +186,7 @@ pub async fn test_storage(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    if !auth.is_admin {
-        return Err(ApiError::Forbidden("Admin only".into()));
-    }
+    auth.require_permission(Permission::ManageStorage, &state).await?;
 
     type StorageRow = (
         String,
@@ -283,9 +274,7 @@ pub async fn permissions_catalog(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
-    if !auth.is_admin {
-        return Err(ApiError::Forbidden("Admin only".into()));
-    }
+    auth.require_permission(Permission::ManageStorage, &state).await?;
 
     type CatRow = (String, String, String);
     let rows: Vec<CatRow> = sqlx::query_as(

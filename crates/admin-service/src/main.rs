@@ -38,10 +38,7 @@ async fn main() {
         ]))
         .allow_credentials(true);
 
-    let event_bus: std::sync::Arc<dyn shared::events::EventBus> = match shared::events::NatsEventBus::connect(&config.nats_url).await {
-        Ok(bus) => std::sync::Arc::new(bus),
-        Err(e) => { tracing::warn!("NATS unavailable: {e}"); std::sync::Arc::new(shared::events::NoopEventBus) }
-    };
+    let event_bus = shared::events::connect_event_bus(&config.nats_url).await;
     let state = AppState { db: pool, redis: redis_conn, config: config.clone(), event_bus };
     let app = routes::create_router(state.clone())
         .route("/metrics", axum::routing::get(shared::metrics::metrics_handler))

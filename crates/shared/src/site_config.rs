@@ -264,28 +264,48 @@ impl Default for SiteConfig {
     }
 }
 
-fn get_str(map: &HashMap<String, HashMap<String, String>>, cat: &str, key: &str, default: &str) -> String {
+fn get_str(
+    map: &HashMap<String, HashMap<String, String>>,
+    cat: &str,
+    key: &str,
+    default: &str,
+) -> String {
     map.get(cat)
         .and_then(|m| m.get(key))
         .cloned()
         .unwrap_or_else(|| default.to_string())
 }
 
-fn get_bool(map: &HashMap<String, HashMap<String, String>>, cat: &str, key: &str, default: bool) -> bool {
+fn get_bool(
+    map: &HashMap<String, HashMap<String, String>>,
+    cat: &str,
+    key: &str,
+    default: bool,
+) -> bool {
     map.get(cat)
         .and_then(|m| m.get(key))
         .map(|v| v == "1" || v == "true" || v == "yes")
         .unwrap_or(default)
 }
 
-fn get_i64(map: &HashMap<String, HashMap<String, String>>, cat: &str, key: &str, default: i64) -> i64 {
+fn get_i64(
+    map: &HashMap<String, HashMap<String, String>>,
+    cat: &str,
+    key: &str,
+    default: i64,
+) -> i64 {
     map.get(cat)
         .and_then(|m| m.get(key))
         .and_then(|v| v.parse().ok())
         .unwrap_or(default)
 }
 
-fn get_i32(map: &HashMap<String, HashMap<String, String>>, cat: &str, key: &str, default: i32) -> i32 {
+fn get_i32(
+    map: &HashMap<String, HashMap<String, String>>,
+    cat: &str,
+    key: &str,
+    default: i32,
+) -> i32 {
     map.get(cat)
         .and_then(|m| m.get(key))
         .and_then(|v| v.parse().ok())
@@ -314,7 +334,12 @@ pub async fn load_config(db: &PgPool) -> Result<SiteConfig, sqlx::Error> {
             site_url: get_str(&map, "general", "site_url", &default.general.site_url),
             site_desc: get_str(&map, "general", "site_desc", &default.general.site_desc),
             site_email: get_str(&map, "general", "site_email", &default.general.site_email),
-            default_language: get_str(&map, "general", "default_language", &default.general.default_language),
+            default_language: get_str(
+                &map,
+                "general",
+                "default_language",
+                &default.general.default_language,
+            ),
             theme: get_str(&map, "general", "theme", &default.general.theme),
             maintenance_mode: get_bool(&map, "general", "maintenance_mode", false),
             timezone: get_str(&map, "general", "timezone", &default.general.timezone),
@@ -366,7 +391,12 @@ pub async fn load_config(db: &PgPool) -> Result<SiteConfig, sqlx::Error> {
         },
         media: MediaConfig {
             max_upload_size: get_i64(&map, "media", "max_upload_size", 10_485_760),
-            allowed_extensions: get_str(&map, "media", "allowed_extensions", "jpg,jpeg,png,gif,webp,mp4,mp3,pdf"),
+            allowed_extensions: get_str(
+                &map,
+                "media",
+                "allowed_extensions",
+                "jpg,jpeg,png,gif,webp,mp4,mp3,pdf",
+            ),
             images_quality: get_i32(&map, "media", "images_quality", 80),
             watermark: get_bool(&map, "media", "watermark", false),
             storage_provider: get_str(&map, "media", "storage_provider", "local"),
@@ -380,11 +410,15 @@ pub async fn load_config(db: &PgPool) -> Result<SiteConfig, sqlx::Error> {
             paypal_client_id: get_str(&map, "payment", "paypal_client_id", ""),
             pro_packages_enabled: get_bool(&map, "payment", "pro_packages_enabled", true),
             wallet_enabled: get_bool(&map, "payment", "wallet_enabled", true),
-            withdrawal_min: get_str(&map, "payment", "withdrawal_min", "50").parse().unwrap_or(50.0),
+            withdrawal_min: get_str(&map, "payment", "withdrawal_min", "50")
+                .parse()
+                .unwrap_or(50.0),
         },
         email: EmailConfig {
             smtp_host: get_str(&map, "email", "smtp_host", "localhost"),
-            smtp_port: get_str(&map, "email", "smtp_port", "587").parse().unwrap_or(587),
+            smtp_port: get_str(&map, "email", "smtp_port", "587")
+                .parse()
+                .unwrap_or(587),
             smtp_username: get_str(&map, "email", "smtp_username", ""),
             smtp_encryption: get_str(&map, "email", "smtp_encryption", "tls"),
             from_email: get_str(&map, "email", "from_email", "noreply@example.com"),

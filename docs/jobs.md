@@ -103,8 +103,13 @@ El `jobs-runner` es un binario independiente que ejecuta 20 tareas en segundo pl
 ---
 
 ### 17. `crypto_payment_reconciliation`
-**Frecuencia**: Cada 10 minutos  
-**Descripción**: Verifica el estado de pagos con criptomonedas pendientes (CoinPayments, Coinbase Commerce). Actualiza el estado de las transacciones según la confirmación en blockchain.
+**Frecuencia**: Cada 15 minutos  
+**Descripción**: Reconcilia transacciones cripto pendientes contra las APIs de los proveedores en lugar de depender solo de webhooks (cubre IPN perdidos, retrasos de red, etc.).
+
+- **Coinbase Commerce**: usa `COINBASE_COMMERCE_API_KEY` y consulta `GET https://api.commerce.coinbase.com/charges/{reference}` mapeando el último estado del `timeline` a `completed` / `cancelled` / `failed`.
+- **CoinPayments**: usa `COINPAYMENTS_PUBLIC_KEY` + `COINPAYMENTS_PRIVATE_KEY` para firmar HMAC-SHA512 y llamar al comando `get_tx_info` (status ≥ 100 → `completed`, < 0 → `failed`).
+
+Solo procesa hasta 50 transacciones pendientes por iteración y ventana de 7 días, para evitar ráfagas y respetar los rate-limits de los proveedores. Cualquier error parcial se reporta a `cronjob_runs`.
 
 ---
 
@@ -144,6 +149,12 @@ async fn main() {
 ```
 
 Cada job es una función `async fn run(state: AppState)` que ejecuta un loop infinito con `tokio::time::interval`.
+
+### Observabilidad (`cronjob_runs`)
+
+Cada iteración pasa por el helper `crate::cron::tracked` que mide la duración, persiste un registro en la tabla `cronjob_runs` (`name`, `status`, `message`, `duration_ms`, `ran_at`) y emite logs estructurados.
+
+El admin lee este histórico vía `GET /v1/admin/cronjobs/status` (último run por job) y `GET /v1/admin/cronjob-config` (catálogo + último run + activo/inactivo) para alimentar la página *System → Scheduled jobs*. Los nombres de job en `cronjob_runs.name` y `cronjob_config.job_name` deben coincidir exactamente con los nombres de los módulos en `crates/jobs-runner/src/jobs/` para que la UI haga el join correctamente.
 
 ---
 

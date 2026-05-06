@@ -22,9 +22,10 @@ pub async fn run(pool: PgPool, bus: NatsEventBus) {
 
     while let Some(msg) = sub.next().await {
         let subject = msg.subject.to_string();
-        let payload: serde_json::Value = serde_json::from_slice(&msg.payload).unwrap_or_else(
-            |_| serde_json::Value::String(String::from_utf8_lossy(&msg.payload).into_owned()),
-        );
+        let payload: serde_json::Value =
+            serde_json::from_slice(&msg.payload).unwrap_or_else(|_| {
+                serde_json::Value::String(String::from_utf8_lossy(&msg.payload).into_owned())
+            });
 
         let result = sqlx::query(
             r#"INSERT INTO event_dlq (subject, payload, error)

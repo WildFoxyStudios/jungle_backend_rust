@@ -1,17 +1,15 @@
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::auth::AppState;
 
 use crate::hub::ConnectionHub;
 
 type PresenceState = (AppState, ConnectionHub);
 
-pub async fn online_users(
-    State((_state, hub)): State<PresenceState>,
-) -> Json<Value> {
+pub async fn online_users(State((_state, hub)): State<PresenceState>) -> Json<Value> {
     let users = hub.online_users();
     Json(json!({
         "data": {

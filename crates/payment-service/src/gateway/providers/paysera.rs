@@ -3,8 +3,8 @@ use rust_decimal::Decimal;
 use std::collections::HashMap;
 
 use crate::gateway::{
-    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus,
-    PaymentStatusKind, RefundResult, WebhookEvent,
+    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
+    RefundResult, WebhookEvent,
 };
 
 pub struct PayseraGateway {
@@ -36,7 +36,9 @@ impl PaymentGateway for PayseraGateway {
 
     async fn create_session(&self, params: PaymentParams) -> Result<PaymentSession, PaymentError> {
         let order_id = format!("ps_{}", uuid::Uuid::new_v4().simple());
-        let amount_cents = (params.amount * Decimal::from(100)).to_string().replace(".0", "");
+        let amount_cents = (params.amount * Decimal::from(100))
+            .to_string()
+            .replace(".0", "");
 
         let mut pay_params: HashMap<String, String> = HashMap::new();
         pay_params.insert("projectid".into(), self.project_id.clone());
@@ -45,8 +47,18 @@ impl PaymentGateway for PayseraGateway {
         pay_params.insert("currency".into(), params.currency.clone());
         pay_params.insert("accepturl".into(), params.return_url.clone());
         pay_params.insert("cancelurl".into(), params.cancel_url.clone());
-        pay_params.insert("callbackurl".into(), params.metadata.get("webhook_url").cloned().unwrap_or_default());
-        pay_params.insert("test".into(), std::env::var("PAYSERA_TEST").unwrap_or_else(|_| "1".into()));
+        pay_params.insert(
+            "callbackurl".into(),
+            params
+                .metadata
+                .get("webhook_url")
+                .cloned()
+                .unwrap_or_default(),
+        );
+        pay_params.insert(
+            "test".into(),
+            std::env::var("PAYSERA_TEST").unwrap_or_else(|_| "1".into()),
+        );
 
         // Base64 encode parameters
         let query_string = serde_urlencoded::to_string(&pay_params)
@@ -57,10 +69,7 @@ impl PaymentGateway for PayseraGateway {
         );
         let sign = self.sign_data(&data);
 
-        let redirect_url = format!(
-            "https://www.paysera.com/pay/?data={}&sign={}",
-            data, sign
-        );
+        let redirect_url = format!("https://www.paysera.com/pay/?data={}&sign={}", data, sign);
 
         Ok(PaymentSession {
             provider: "paysera".into(),
@@ -100,12 +109,20 @@ impl PaymentGateway for PayseraGateway {
         })
     }
 
-    async fn handle_webhook(&self, payload: &[u8], _signature: &str) -> Result<WebhookEvent, PaymentError> {
+    async fn handle_webhook(
+        &self,
+        payload: &[u8],
+        _signature: &str,
+    ) -> Result<WebhookEvent, PaymentError> {
         let form: HashMap<String, String> = serde_urlencoded::from_bytes(payload)
             .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
-        let data = form.get("data").ok_or_else(|| PaymentError::ProviderError("Missing data".into()))?;
-        let ss1 = form.get("ss1").ok_or_else(|| PaymentError::ProviderError("Missing ss1".into()))?;
+        let data = form
+            .get("data")
+            .ok_or_else(|| PaymentError::ProviderError("Missing data".into()))?;
+        let ss1 = form
+            .get("ss1")
+            .ok_or_else(|| PaymentError::ProviderError("Missing ss1".into()))?;
 
         // Verify signature
         let expected_sign = self.sign_data(data);
@@ -114,16 +131,17 @@ impl PaymentGateway for PayseraGateway {
         }
 
         // Decode base64 data
-        let decoded = base64::Engine::decode(
-            &base64::engine::general_purpose::URL_SAFE_NO_PAD,
-            data,
-        )
-        .map_err(|_| PaymentError::ProviderError("Invalid base64 data".into()))?;
+        let decoded =
+            base64::Engine::decode(&base64::engine::general_purpose::URL_SAFE_NO_PAD, data)
+                .map_err(|_| PaymentError::ProviderError("Invalid base64 data".into()))?;
 
         let params: HashMap<String, String> = serde_urlencoded::from_bytes(&decoded)
             .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
-        let status_code = params.get("status").and_then(|s| s.parse::<i32>().ok()).unwrap_or(0);
+        let status_code = params
+            .get("status")
+            .and_then(|s| s.parse::<i32>().ok())
+            .unwrap_or(0);
         let status = match status_code {
             1 => PaymentStatusKind::Completed,
             2 => PaymentStatusKind::Pending,
@@ -135,14 +153,20 @@ impl PaymentGateway for PayseraGateway {
             provider_ref: params.get("orderid").cloned().unwrap_or_default(),
             status,
             amount: params.get("amount").and_then(|s| {
-                s.parse::<i64>().ok().map(|cents| Decimal::from(cents) / Decimal::from(100))
+                s.parse::<i64>()
+                    .ok()
+                    .map(|cents| Decimal::from(cents) / Decimal::from(100))
             }),
             currency: params.get("currency").cloned(),
             metadata: HashMap::new(),
         })
     }
 
-    async fn refund(&self, _tx_id: &str, _amount: Option<Decimal>) -> Result<RefundResult, PaymentError> {
+    async fn refund(
+        &self,
+        _tx_id: &str,
+        _amount: Option<Decimal>,
+    ) -> Result<RefundResult, PaymentError> {
         Err(PaymentError::ProviderError(
             "Paysera refunds must be processed via the merchant dashboard".to_string(),
         ))

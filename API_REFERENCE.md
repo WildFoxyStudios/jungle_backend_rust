@@ -3,6 +3,10 @@
 Base URL: `http://localhost:8080`
 Auth: `Authorization: Bearer <access_token>` (except public routes)
 
+> Last regenerated: 2026-04-24 (post Wave-D migration). Includes Web Push,
+> AI chat suggestions, Live VOD, image rotate, GIF proxy, OAuth verify,
+> backups/restore and DLQ admin endpoints.
+
 ---
 
 ## Auth Service
@@ -43,7 +47,7 @@ Auth: `Authorization: Bearer <access_token>` (except public routes)
 ### Social Login
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/v1/auth/social/login` | No | Social login (body: `{provider, token}`) — supports: google, facebook, twitter, apple, linkedin, discord, tiktok, instagram, vkontakte, qq, wechat, mailru, okru, wordpress |
+| POST | `/v1/auth/social/login` | No | Social login (body: `{provider, token}`) — supports: google, facebook, twitter, apple, linkedin, github, microsoft, discord, tiktok, instagram, vkontakte, qq, wechat, mailru, okru, wordpress |
 
 ### Sessions
 | Method | Path | Auth | Description |
@@ -300,6 +304,8 @@ Auth: `Authorization: Bearer <access_token>` (except public routes)
 | GET | `/v1/live/friends` | Yes | Friends currently live |
 | POST | `/v1/live/{id}/comment` | Yes | Comment on live stream |
 | POST | `/v1/live/{id}/react` | Yes | React to live stream |
+| GET | `/v1/live/{id}/vod` | Yes | Get VOD playback metadata for an ended stream (`vod_url`, `vod_thumbnail`, `vod_duration_seconds`, `vod_ready_at`) |
+| PATCH | `/v1/live/{id}/vod` | Admin/Worker | Publish VOD metadata after the transcoder finishes (used by `live-vod-transcoder`) |
 
 
 ---
@@ -380,12 +386,21 @@ Auth: `Authorization: Bearer <access_token>` (except public routes)
 | GET | `/v1/notifications/preferences` | Yes | Get notification preferences |
 | PUT | `/v1/notifications/preferences` | Yes | Update notification preferences |
 
-### Push Tokens
+### Push Tokens (FCM/APNs)
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
 | POST | `/v1/notifications/push-tokens` | Yes | Register push token (FCM/APNs) |
 | GET | `/v1/notifications/push-tokens` | Yes | List my push tokens |
 | DELETE | `/v1/notifications/push-tokens/{token}` | Yes | Unregister push token |
+
+### VAPID Web Push (browsers / PWAs)
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/v1/notifications/web-push/public-key` | No | Get VAPID public key for `pushManager.subscribe` |
+| POST | `/v1/notifications/web-push/subscribe` | Yes | Register a Web Push subscription (`{endpoint, p256dh, auth, user_agent?}`) |
+| POST | `/v1/notifications/web-push/unsubscribe` | Yes | Remove a subscription by `endpoint` |
+| GET | `/v1/notifications/web-push/subscriptions` | Yes | List my registered Web Push subscriptions |
+| DELETE | `/v1/notifications/web-push/subscriptions/{id}` | Yes | Delete a single Web Push subscription |
 
 ### Announcements
 | Method | Path | Auth | Description |
@@ -544,6 +559,16 @@ Auth: `Authorization: Bearer <access_token>` (except public routes)
 |--------|------|------|-------------|
 | GET | `/v1/pages/custom` | No | List custom pages |
 | GET | `/v1/pages/custom/{slug}` | No | Get custom page by slug |
+
+### GIF Proxy
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| GET | `/v1/gifs/search` | Yes | Search/trending GIFs through Giphy or Tenor (server-side keys; query: `q`, `limit`, `offset`, optional `provider=giphy\|tenor`) |
+
+### AI Assistance
+| Method | Path | Auth | Description |
+|--------|------|------|-------------|
+| POST | `/v1/ai/chat-suggestions` | Yes | Generate smart-reply chips for a chat thread (body: `{conversation_id, recent_messages[]}`) |
 
 ---
 
@@ -705,6 +730,7 @@ Auth: `Authorization: Bearer <access_token>` (except public routes)
 | GET | `/v1/media/{id}` | Yes | Get media info |
 | DELETE | `/v1/media/{id}` | Yes | Delete media |
 | GET | `/v1/media/my` | Yes | My uploaded media |
+| POST | `/v1/media/{id}/rotate` | Yes | Rotate an image asset 90 / 180 / 270 / -90 (body: `{degrees}`); generates a new derivative and updates URLs |
 
 ### Stories
 | Method | Path | Auth | Description |
@@ -736,17 +762,38 @@ Auth: `Authorization: Bearer <access_token>` (except public routes)
 | GET | `/v1/presence/online` | Yes | List online users |
 | GET | `/v1/presence/{user_id}` | Yes | Check if user is online |
 
+### WebSocket Protocol (client ↔ server)
+The realtime service uses a JSON envelope: `{ "type": "<event>", "data": {...} }`.
+
+Client → server control frames:
+
+| Type | Payload | Description |
+|------|---------|-------------|
+| `subscribe` | `{topic}` | Subscribe the connection to a topic (e.g. `chat.<conversation_id>`, `presence.<user_id>`, `feed.global`) |
+| `unsubscribe` | `{topic}` | Drop a topic subscription |
+| `ping` | `{}` | Heartbeat; server replies with `pong` |
+
 ### WebSocket Events (server → client)
 | Event | Payload | Description |
 |-------|---------|-------------|
 | `message.new` | `{conversation_id, message}` | New message received |
 | `notification.new` | `{notification}` | New notification |
-| `presence.online` | `{user_id}` | User came online |
-| `presence.offline` | `{user_id}` | User went offline |
+| `notification.unread_count` | `{count}` | Unread notification count for the current user |
+| `presence.online` | `{user_id, last_seen}` | User came online |
+| `presence.offline` | `{user_id, last_seen}` | User went offline |
 | `typing.start` | `{conversation_id, user_id}` | User started typing |
 | `typing.stop` | `{conversation_id, user_id}` | User stopped typing |
-| `call.incoming` | `{call_id, caller, call_type}` | Incoming call |
-| `post.new` | `{post_id}` | New post available in feed |
+| `call.incoming` / `call.started` | `{call_id, caller_id, callee_id, call_type}` | Incoming/started call |
+| `call.answered` | `{call_id}` | Call accepted by callee |
+| `call.ended` | `{call_id}` | Call ended (declined, hung up, missed) |
+| `post.new` | `{post_id, author_id}` | New post available in feed |
+| `post.reaction` | `{post_id, user_id, reaction_type}` | Reaction added/changed on a post |
+| `post.comment` | `{post_id, comment}` | New comment on a post the user follows |
+| `feed.new_posts` | `{count}` | "Show new posts" banner counter (drives `NewPostsBanner` widget) |
+| `user.avatar_changed` | `{user_id, avatar_url}` | Avatar updated; clients refresh attached UI without reload |
+| `user.name_changed` | `{user_id, first_name, last_name}` | Display name updated |
+| `social.follow` | `{follower_id, followed_id}` | New follow relationship |
+| `chat.color_changed` | `{conversation_id, color}` | Conversation color updated |
 
 
 ---
@@ -934,6 +981,17 @@ Auth: `Authorization: Bearer <access_token>` (except public routes)
 |--------|------|------|-------------|
 | GET | `/v1/admin/backups` | Admin | List backups |
 | POST | `/v1/admin/backups/trigger` | Admin | Trigger backup |
+| GET | `/v1/admin/backups/{id}/download` | Admin | Download a backup file |
+| POST | `/v1/admin/backups/{id}/restore` | Admin | Restore a previously taken backup |
+| DELETE | `/v1/admin/backups/{id}` | Admin | Delete a backup file |
+| GET | `/v1/admin/system/ffmpeg-probe` | Admin | Probe ffmpeg/ffprobe availability + version |
+| POST | `/v1/admin/system/email/test` | Admin | Send a test email through the configured provider |
+| POST | `/v1/admin/system/sms/test` | Admin | Send a test SMS through the configured provider |
+| POST | `/v1/admin/oauth-apps/{provider}/verify` | Admin | Verify OAuth provider credentials with a `me`/`userinfo` round-trip |
+| GET | `/v1/admin/system/dlq` | Admin | List failed/skipped domain events (DLQ) |
+| POST | `/v1/admin/system/dlq/{id}/retry` | Admin | Republish a failed domain event |
+| DELETE | `/v1/admin/system/dlq/{id}` | Admin | Discard a failed event without retrying |
+| POST | `/v1/admin/storage/config/{id}/test` | Admin | Probe storage credentials (PutObject/DeleteObject) |
 | GET | `/v1/admin/newsletter/subscribers` | Admin | List newsletter subscribers |
 | DELETE | `/v1/admin/newsletter/subscribers/{id}` | Admin | Remove subscriber |
 | POST | `/v1/admin/newsletter/send` | Admin | Send newsletter |

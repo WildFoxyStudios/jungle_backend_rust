@@ -8,16 +8,10 @@ use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
     pagination::PaginationParams,
+    permissions::Permission,
 };
 use sqlx::FromRow;
 use time::OffsetDateTime;
-
-fn require_admin(auth: &AuthUser) -> Result<(), ApiError> {
-    if !auth.is_admin {
-        return Err(ApiError::Forbidden("".into()));
-    }
-    Ok(())
-}
 
 #[derive(Debug, Serialize, FromRow)]
 pub struct OAuthAppRow {
@@ -36,7 +30,7 @@ pub async fn list_oauth_apps(
     auth: AuthUser,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageOauth, &state).await?;
     let limit = params.limit();
     let cursor = params.cursor_id().unwrap_or(i64::MAX);
 
@@ -64,7 +58,7 @@ pub async fn toggle_oauth_app(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageOauth, &state).await?;
 
     let new_status = sqlx::query_scalar::<_, bool>(
         "UPDATE oauth_apps SET is_active = NOT is_active WHERE id = $1 RETURNING is_active",
@@ -83,7 +77,7 @@ pub async fn delete_oauth_app(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageOauth, &state).await?;
 
     // Cascade: delete tokens, codes, then app
     sqlx::query("DELETE FROM oauth_tokens WHERE app_id = $1").bind(id).execute(&state.db).await?;

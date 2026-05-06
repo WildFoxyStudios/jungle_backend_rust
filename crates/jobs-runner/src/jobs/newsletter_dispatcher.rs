@@ -5,6 +5,8 @@ use shared::email;
 use sqlx::PgPool;
 use std::time::Duration;
 
+use crate::cron;
+
 #[derive(sqlx::FromRow)]
 struct QueuedEmail {
     id: i64,
@@ -42,55 +44,65 @@ pub async fn run(pool: PgPool) {
     const BATCH: i64 = 50;
 
     loop {
-        match sqlx::query_as::<_, QueuedEmail>(
-            r#"SELECT id, recipient_email, subject, body, attempts
-                 FROM newsletter_queue
-                WHERE status = 'pending' AND attempts < 5
-             ORDER BY created_at ASC
-                LIMIT $1"#,
-        )
-        .bind(BATCH)
-        .fetch_all(&pool)
-        .await
-        {
-            Ok(batch) if !batch.is_empty() => {
-                let mut ok = 0u64;
-                for msg in batch {
-                    let res = email::send_email(&msg.recipient_email, &msg.subject, &msg.body).await;
-                    match res {
-                        Ok(()) => {
-                            let _ = sqlx::query(
-                                "UPDATE newsletter_queue SET status='sent', sent_at=NOW() WHERE id=$1",
-                            )
-                            .bind(msg.id)
-                            .execute(&pool)
-                            .await;
-                            ok += 1;
-                        }
-                        Err(err) => {
-                            let next_status = if msg.attempts + 1 >= 5 { "failed" } else { "pending" };
-                            let _ = sqlx::query(
-                                r#"UPDATE newsletter_queue
-                                      SET attempts = attempts + 1,
-                                          status = $2,
-                                          error_message = $3
-                                    WHERE id = $1"#,
-                            )
-                            .bind(msg.id)
-                            .bind(next_status)
-                            .bind(err)
-                            .execute(&pool)
-                            .await;
-                        }
+        cron::tracked(&pool, "newsletter_dispatcher", || async {
+            let batch = sqlx::query_as::<_, QueuedEmail>(
+                r#"SELECT id, recipient_email, subject, body, attempts
+                     FROM newsletter_queue
+                    WHERE status = 'pending' AND attempts < 5
+                 ORDER BY created_at ASC
+                    LIMIT $1"#,
+            )
+            .bind(BATCH)
+            .fetch_all(&pool)
+            .await
+            .map_err(|e| e.to_string())?;
+
+            if batch.is_empty() {
+                return Ok("no pending".into());
+            }
+
+            let mut ok = 0u64;
+            let mut failed = 0u64;
+            for msg in batch {
+                let res = email::send_email(&msg.recipient_email, &msg.subject, &msg.body).await;
+                match res {
+                    Ok(()) => {
+                        let _ = sqlx::query(
+                            "UPDATE newsletter_queue SET status='sent', sent_at=NOW() WHERE id=$1",
+                        )
+                        .bind(msg.id)
+                        .execute(&pool)
+                        .await;
+                        ok += 1;
+                    }
+                    Err(err) => {
+                        let next_status = if msg.attempts + 1 >= 5 {
+                            "failed"
+                        } else {
+                            "pending"
+                        };
+                        let _ = sqlx::query(
+                            r#"UPDATE newsletter_queue
+                                  SET attempts = attempts + 1,
+                                      status = $2,
+                                      error_message = $3
+                                WHERE id = $1"#,
+                        )
+                        .bind(msg.id)
+                        .bind(next_status)
+                        .bind(err)
+                        .execute(&pool)
+                        .await;
+                        failed += 1;
                     }
                 }
-                if ok > 0 {
-                    tracing::info!(sent = ok, "newsletter_dispatcher: batch sent");
-                }
             }
-            Ok(_) => {}
-            Err(e) => tracing::error!(error = %e, "newsletter_dispatcher poll failed"),
-        }
+            if ok > 0 {
+                tracing::info!(sent = ok, "newsletter_dispatcher: batch sent");
+            }
+            Ok(format!("sent {}, failed {}", ok, failed))
+        })
+        .await;
         tokio::time::sleep(interval).await;
     }
 }

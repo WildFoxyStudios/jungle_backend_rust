@@ -21,13 +21,14 @@ COPY crates/commerce-service/Cargo.toml crates/commerce-service/Cargo.toml
 COPY crates/admin-service/Cargo.toml crates/admin-service/Cargo.toml
 COPY crates/payment-service/Cargo.toml crates/payment-service/Cargo.toml
 COPY crates/realtime-service/Cargo.toml crates/realtime-service/Cargo.toml
+COPY crates/live-service/Cargo.toml crates/live-service/Cargo.toml
 COPY crates/api-gateway/Cargo.toml crates/api-gateway/Cargo.toml
 COPY crates/jobs-runner/Cargo.toml crates/jobs-runner/Cargo.toml
 COPY crates/ai-service/Cargo.toml crates/ai-service/Cargo.toml
 
 # Create empty lib.rs / main.rs stubs for dependency caching
 RUN mkdir -p crates/shared/src && echo "pub fn _stub() {}" > crates/shared/src/lib.rs
-RUN for d in auth-service user-service post-service messaging-service media-service notification-service group-page-service content-service commerce-service admin-service payment-service realtime-service api-gateway jobs-runner ai-service; do \
+RUN for d in auth-service user-service post-service messaging-service media-service notification-service group-page-service content-service commerce-service admin-service payment-service realtime-service live-service api-gateway jobs-runner ai-service; do \
       mkdir -p crates/$d/src && echo "fn main() {}" > crates/$d/src/main.rs; \
     done
 
@@ -67,6 +68,7 @@ COPY --from=builder /app/target/release/commerce-service /usr/local/bin/
 COPY --from=builder /app/target/release/admin-service /usr/local/bin/
 COPY --from=builder /app/target/release/payment-service /usr/local/bin/
 COPY --from=builder /app/target/release/realtime-service /usr/local/bin/
+COPY --from=builder /app/target/release/live-service /usr/local/bin/
 COPY --from=builder /app/target/release/api-gateway /usr/local/bin/
 COPY --from=builder /app/target/release/jobs-runner /usr/local/bin/
 COPY --from=builder /app/target/release/ai-service /usr/local/bin/
@@ -76,9 +78,24 @@ COPY --from=builder /app/migrations /app/migrations
 
 WORKDIR /app
 RUN mkdir -p /app/uploads && chown -R app:app /app/uploads
+
+# ── Startup script: runs api-gateway + jobs-runner for consolidated mode ──
+RUN printf '#!/bin/bash\n\
+set -e\n\
+echo "Starting api-gateway on port ${SERVER_PORT:-8080}..."\n\
+/usr/local/bin/api-gateway &\n\
+API_PID=$!\n\
+echo "Starting jobs-runner..."\n\
+/usr/local/bin/jobs-runner &\n\
+JOBS_PID=$!\n\
+trap "kill $API_PID $JOBS_PID 2>/dev/null; exit 0" SIGTERM SIGINT\n\
+wait -n\n\
+' > /usr/local/bin/start.sh && chmod +x /usr/local/bin/start.sh
+
 USER app
 
 ENTRYPOINT ["tini", "--"]
+CMD ["/usr/local/bin/start.sh"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD curl -f http://localhost:${SERVER_PORT:-8080}/health || exit 1

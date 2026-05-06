@@ -1,4 +1,4 @@
-use axum::{routing::any, Router};
+use axum::{Router, routing::any};
 use std::collections::HashMap;
 
 use crate::proxy::{self, GatewayState};
@@ -23,6 +23,16 @@ impl ServiceMap {
             ("/v1/social", "USER_SERVICE_URL"),
             // Users extras
             ("/v1/skills", "USER_SERVICE_URL"),
+            ("/v1/activities", "USER_SERVICE_URL"),
+            ("/v1/reports", "USER_SERVICE_URL"),
+            ("/v1/mentions", "USER_SERVICE_URL"),
+            ("/v1/points", "USER_SERVICE_URL"),
+            ("/v1/contact", "USER_SERVICE_URL"),
+            ("/v1/general", "USER_SERVICE_URL"),
+            // Note: "/v1/search/register" is deliberately LONGER than "/v1/search"
+            // so the longest-prefix sort below (line ~109) wins and routes it to
+            // USER_SERVICE_URL instead of POST_SERVICE_URL.
+            ("/v1/search/register", "USER_SERVICE_URL"),
             // Posts / Feed / Reels / Search / Ads / Comments / Live
             ("/v1/posts", "POST_SERVICE_URL"),
             ("/v1/comments", "POST_SERVICE_URL"),
@@ -35,8 +45,11 @@ impl ServiceMap {
             ("/v1/boosted/pages", "GROUP_PAGE_SERVICE_URL"),
             ("/v1/boosted", "POST_SERVICE_URL"),
             ("/v1/live", "POST_SERVICE_URL"),
+            ("/v1/live-native", "LIVE_SERVICE_URL"),
             // Media & Stories & Uploads
             ("/v1/stories", "MEDIA_SERVICE_URL"),
+            ("/v1/story-highlights", "MEDIA_SERVICE_URL"),
+            ("/v1/albums", "MEDIA_SERVICE_URL"),
             ("/v1/media", "MEDIA_SERVICE_URL"),
             ("/uploads", "MEDIA_SERVICE_URL"),
             // Messaging
@@ -55,17 +68,26 @@ impl ServiceMap {
             // Content
             ("/v1/blogs", "CONTENT_SERVICE_URL"),
             ("/v1/forums", "CONTENT_SERVICE_URL"),
+            ("/v1/gifs", "CONTENT_SERVICE_URL"),
             ("/v1/movies", "CONTENT_SERVICE_URL"),
             ("/v1/games", "CONTENT_SERVICE_URL"),
             ("/v1/emojis", "CONTENT_SERVICE_URL"),
+            ("/v1/lookups", "CONTENT_SERVICE_URL"),
+            ("/v1/countries", "CONTENT_SERVICE_URL"),
             // Commerce
             ("/v1/products", "COMMERCE_SERVICE_URL"),
             ("/v1/orders", "COMMERCE_SERVICE_URL"),
+            ("/v1/cart", "COMMERCE_SERVICE_URL"),
             ("/v1/jobs", "COMMERCE_SERVICE_URL"),
             ("/v1/fundings", "COMMERCE_SERVICE_URL"),
             ("/v1/offers", "COMMERCE_SERVICE_URL"),
             ("/v1/gifts", "COMMERCE_SERVICE_URL"),
             ("/v1/stickers", "COMMERCE_SERVICE_URL"),
+            // Commerce sub-routes under /v1/users/me (must be longer than "/v1/users")
+            ("/v1/users/me/saved-products", "COMMERCE_SERVICE_URL"),
+            ("/v1/users/me/saved-jobs", "COMMERCE_SERVICE_URL"),
+            ("/v1/users/me/job-alerts", "COMMERCE_SERVICE_URL"),
+            ("/v1/users/me/resume", "COMMERCE_SERVICE_URL"),
             // Newsletter
             ("/v1/newsletter", "NOTIFICATION_SERVICE_URL"),
             // Payments
@@ -77,6 +99,7 @@ impl ServiceMap {
             // Realtime
             ("/v1/presence", "REALTIME_SERVICE_URL"),
             ("/ws", "REALTIME_SERVICE_URL"),
+            ("/ws/live-native", "LIVE_SERVICE_URL"),
         ];
 
         let port_defaults: HashMap<&str, &str> = [
@@ -93,6 +116,7 @@ impl ServiceMap {
             ("PAYMENT_SERVICE_URL", "http://127.0.0.1:3011"),
             ("REALTIME_SERVICE_URL", "http://127.0.0.1:3012"),
             ("AI_SERVICE_URL", "http://127.0.0.1:3013"),
+            ("LIVE_SERVICE_URL", "http://127.0.0.1:3014"),
         ]
         .into();
 
@@ -123,6 +147,10 @@ impl ServiceMap {
 pub fn create_router(state: GatewayState) -> Router {
     Router::new()
         .route("/ws", axum::routing::get(crate::ws_proxy::ws_proxy_handler))
+        .route(
+            "/ws/live-native",
+            axum::routing::get(crate::ws_proxy::ws_live_native_proxy_handler),
+        )
         .route("/health", axum::routing::get(gateway_health))
         .fallback(any(proxy::proxy_request))
         .with_state(state)
@@ -133,4 +161,93 @@ async fn gateway_health() -> axum::Json<serde_json::Value> {
         "status": "healthy",
         "service": "api-gateway"
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn map_with_env() -> ServiceMap {
+        // Ensure deterministic defaults even in CI where env vars may be set.
+        for key in [
+            "AUTH_SERVICE_URL",
+            "USER_SERVICE_URL",
+            "POST_SERVICE_URL",
+            "MESSAGING_SERVICE_URL",
+            "MEDIA_SERVICE_URL",
+            "NOTIFICATION_SERVICE_URL",
+            "GROUP_PAGE_SERVICE_URL",
+            "CONTENT_SERVICE_URL",
+            "COMMERCE_SERVICE_URL",
+            "ADMIN_SERVICE_URL",
+            "PAYMENT_SERVICE_URL",
+            "REALTIME_SERVICE_URL",
+            "AI_SERVICE_URL",
+            "LIVE_SERVICE_URL",
+        ] {
+            // SAFETY: tests are single-threaded within this test module.
+            unsafe {
+                std::env::remove_var(key);
+            }
+        }
+        ServiceMap::from_env()
+    }
+
+    fn assert_route(sm: &ServiceMap, path: &str, expected_port: &str) {
+        let url = sm
+            .resolve(path)
+            .unwrap_or_else(|| panic!("no route for {path}"));
+        assert!(
+            url.ends_with(expected_port),
+            "path {path} → {url} did not match expected port {expected_port}"
+        );
+    }
+
+    #[test]
+    fn search_register_overrides_search_prefix() {
+        let sm = map_with_env();
+        // /v1/search goes to post-service (3003) but /v1/search/register
+        // must beat it because it is longer and is registered as USER_SERVICE.
+        assert_route(&sm, "/v1/search/foo", "3003");
+        assert_route(&sm, "/v1/search/register", "3002");
+    }
+
+    #[test]
+    fn user_extras_route_to_user_service() {
+        let sm = map_with_env();
+        for path in [
+            "/v1/activities/recent",
+            "/v1/reports/123",
+            "/v1/mentions?q=jane",
+            "/v1/points/history",
+            "/v1/contact",
+            "/v1/general/ping",
+        ] {
+            assert_route(&sm, path, "3002");
+        }
+    }
+
+    #[test]
+    fn albums_and_cart() {
+        let sm = map_with_env();
+        assert_route(&sm, "/v1/albums/1", "3005");
+        assert_route(&sm, "/v1/cart", "3009");
+    }
+
+    #[test]
+    fn baseline_prefixes_still_resolve() {
+        let sm = map_with_env();
+        assert_route(&sm, "/v1/auth/login", "3001");
+        assert_route(&sm, "/v1/users/123", "3002");
+        assert_route(&sm, "/v1/posts/feed", "3003");
+        assert_route(&sm, "/v1/conversations", "3004");
+        assert_route(&sm, "/v1/media/upload", "3005");
+        assert_route(&sm, "/v1/notifications", "3006");
+        assert_route(&sm, "/v1/admin/users", "3010");
+        assert_route(&sm, "/v1/payments/checkout", "3011");
+        assert_route(&sm, "/ws", "3012");
+        assert_route(&sm, "/v1/ai/chat", "3013");
+        assert_route(&sm, "/v1/live-native/rooms", "3014");
+        assert_route(&sm, "/ws/live-native", "3014");
+    }
 }

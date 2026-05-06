@@ -1,9 +1,9 @@
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -133,7 +133,9 @@ pub async fn subscribe(
 
     tx.commit().await?;
 
-    Ok(Json(json!({ "data": { "subscribed": true, "tier": tier.name, "amount": tier.price } })))
+    Ok(Json(
+        json!({ "data": { "subscribed": true, "tier": tier.name, "amount": tier.price } }),
+    ))
 }
 
 // ── Additional Creator Endpoints ────────────────────────────────────

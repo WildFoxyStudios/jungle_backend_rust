@@ -8,7 +8,7 @@
 use axum::{
     body::Body,
     extract::{Path, State},
-    http::{header, HeaderMap, HeaderValue, StatusCode},
+    http::{HeaderMap, HeaderValue, StatusCode, header},
     response::Response,
 };
 use lopdf::content::{Content, Operation};
@@ -95,9 +95,8 @@ pub async fn download_invoice(
     let site_name = std::env::var("SITE_NAME").unwrap_or_else(|_| "WoWonder".into());
     let currency = std::env::var("CURRENCY").unwrap_or_else(|_| "USD".into());
 
-    let pdf_bytes = build_invoice_pdf(&row, &site_name, &currency).map_err(|e| {
-        ApiError::Internal(format!("Failed to build invoice PDF: {}", e))
-    })?;
+    let pdf_bytes = build_invoice_pdf(&row, &site_name, &currency)
+        .map_err(|e| ApiError::Internal(format!("Failed to build invoice PDF: {}", e)))?;
 
     let filename = format!("invoice-{}.pdf", row.order_uuid);
     let mut headers = HeaderMap::new();
@@ -286,7 +285,14 @@ fn build_invoice_pdf(
     cursor_y -= 50;
 
     // Footer / thank you
-    write_text(&mut ops, "F1", 9, 50, cursor_y, "Thank you for your purchase.");
+    write_text(
+        &mut ops,
+        "F1",
+        9,
+        50,
+        cursor_y,
+        "Thank you for your purchase.",
+    );
     cursor_y -= 11;
     write_text(
         &mut ops,
@@ -354,21 +360,21 @@ fn encode_win_ansi(input: &str) -> Vec<u8> {
             // ASCII passes through
             0x20..=0x7E => c as u8,
             // WinAnsi extras (CP1252)
-            0x2022 => 0x95, // bullet
-            0x2013 => 0x96, // en dash
-            0x2014 => 0x97, // em dash
-            0x2018 => 0x91, // left single quote
-            0x2019 => 0x92, // right single quote
-            0x201C => 0x93, // left double quote
-            0x201D => 0x94, // right double quote
+            0x2022 => 0x95,             // bullet
+            0x2013 => 0x96,             // en dash
+            0x2014 => 0x97,             // em dash
+            0x2018 => 0x91,             // left single quote
+            0x2019 => 0x92,             // right single quote
+            0x201C => 0x93,             // left double quote
+            0x201D => 0x94,             // right double quote
             0x00A0..=0x00FF => c as u8, // Latin-1 supplement
-            0x0152 => 0x8C, // OE
-            0x0153 => 0x9C, // oe
-            0x0160 => 0x8A, // Š
-            0x0161 => 0x9A, // š
-            0x0178 => 0x9F, // Ÿ
-            0x017D => 0x8E, // Ž
-            0x017E => 0x9E, // ž
+            0x0152 => 0x8C,             // OE
+            0x0153 => 0x9C,             // oe
+            0x0160 => 0x8A,             // Š
+            0x0161 => 0x9A,             // š
+            0x0178 => 0x9F,             // Ÿ
+            0x017D => 0x8E,             // Ž
+            0x017E => 0x9E,             // ž
             _ => b'?',
         };
         out.push(byte);
@@ -377,7 +383,9 @@ fn encode_win_ansi(input: &str) -> Vec<u8> {
 }
 
 fn display_name(first: &str, last: &str, username: &str) -> String {
-    let full = format!("{} {}", first.trim(), last.trim()).trim().to_string();
+    let full = format!("{} {}", first.trim(), last.trim())
+        .trim()
+        .to_string();
     if full.is_empty() {
         format!("@{}", username)
     } else {
@@ -406,27 +414,27 @@ fn format_address(v: &Value) -> String {
         let mut lines: Vec<String> = Vec::new();
 
         // Recipient name (if provided) goes on its own line.
-        if let Some(val) = obj.get("name").and_then(|x| x.as_str()) {
-            if !val.trim().is_empty() {
-                lines.push(val.trim().to_string());
-            }
+        if let Some(val) = obj.get("name").and_then(|x| x.as_str())
+            && !val.trim().is_empty()
+        {
+            lines.push(val.trim().to_string());
         }
         // Street line 1 — try aliases in order of preference.
         for key in ["line1", "line_1", "street", "address"] {
-            if let Some(val) = obj.get(key).and_then(|x| x.as_str()) {
-                if !val.trim().is_empty() {
-                    lines.push(val.trim().to_string());
-                    break;
-                }
+            if let Some(val) = obj.get(key).and_then(|x| x.as_str())
+                && !val.trim().is_empty()
+            {
+                lines.push(val.trim().to_string());
+                break;
             }
         }
         // Optional street line 2.
         for key in ["line2", "line_2", "address2"] {
-            if let Some(val) = obj.get(key).and_then(|x| x.as_str()) {
-                if !val.trim().is_empty() {
-                    lines.push(val.trim().to_string());
-                    break;
-                }
+            if let Some(val) = obj.get(key).and_then(|x| x.as_str())
+                && !val.trim().is_empty()
+            {
+                lines.push(val.trim().to_string());
+                break;
             }
         }
         let city = obj.get("city").and_then(|x| x.as_str()).unwrap_or("");
@@ -446,10 +454,10 @@ fn format_address(v: &Value) -> String {
         if !city_line.is_empty() {
             lines.push(city_line);
         }
-        if let Some(country) = obj.get("country").and_then(|x| x.as_str()) {
-            if !country.trim().is_empty() {
-                lines.push(country.to_string());
-            }
+        if let Some(country) = obj.get("country").and_then(|x| x.as_str())
+            && !country.trim().is_empty()
+        {
+            lines.push(country.to_string());
         }
         if !lines.is_empty() {
             return lines.join("\n");

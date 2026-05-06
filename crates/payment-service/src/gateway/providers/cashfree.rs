@@ -3,8 +3,8 @@ use rust_decimal::Decimal;
 use std::collections::HashMap;
 
 use crate::gateway::{
-    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus,
-    PaymentStatusKind, RefundResult, WebhookEvent,
+    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
+    RefundResult, WebhookEvent,
 };
 
 pub struct CashfreeGateway {
@@ -76,7 +76,10 @@ impl PaymentGateway for CashfreeGateway {
             ));
         }
 
-        let session_id = result["payment_session_id"].as_str().unwrap_or("").to_string();
+        let session_id = result["payment_session_id"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
         let payment_link = result["payment_link"].as_str().unwrap_or("").to_string();
 
         Ok(PaymentSession {
@@ -109,12 +112,18 @@ impl PaymentGateway for CashfreeGateway {
         Ok(PaymentStatus {
             provider_ref: result["cf_order_id"].as_str().unwrap_or("").to_string(),
             status,
-            amount: result["order_amount"].as_f64().map(|a| Decimal::try_from(a).unwrap_or(Decimal::ZERO)),
+            amount: result["order_amount"]
+                .as_f64()
+                .map(|a| Decimal::try_from(a).unwrap_or(Decimal::ZERO)),
             currency: result["order_currency"].as_str().map(|s| s.to_string()),
         })
     }
 
-    async fn handle_webhook(&self, payload: &[u8], signature: &str) -> Result<WebhookEvent, PaymentError> {
+    async fn handle_webhook(
+        &self,
+        payload: &[u8],
+        signature: &str,
+    ) -> Result<WebhookEvent, PaymentError> {
         // Cashfree sends webhook with x-webhook-signature header (HMAC-SHA256)
         if !signature.is_empty() && !self.secret_key.is_empty() {
             use hmac::{Hmac, Mac};
@@ -133,8 +142,8 @@ impl PaymentGateway for CashfreeGateway {
             }
         }
 
-        let body: serde_json::Value =
-            serde_json::from_slice(payload).map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+        let body: serde_json::Value = serde_json::from_slice(payload)
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         let data = &body["data"];
         let order = &data["order"];
@@ -150,13 +159,19 @@ impl PaymentGateway for CashfreeGateway {
             event_type: body["type"].as_str().unwrap_or("unknown").to_string(),
             provider_ref: order["order_id"].as_str().unwrap_or("").to_string(),
             status,
-            amount: payment["payment_amount"].as_f64().map(|a| Decimal::try_from(a).unwrap_or(Decimal::ZERO)),
+            amount: payment["payment_amount"]
+                .as_f64()
+                .map(|a| Decimal::try_from(a).unwrap_or(Decimal::ZERO)),
             currency: payment["payment_currency"].as_str().map(|s| s.to_string()),
             metadata: HashMap::new(),
         })
     }
 
-    async fn refund(&self, order_id: &str, amount: Option<Decimal>) -> Result<RefundResult, PaymentError> {
+    async fn refund(
+        &self,
+        order_id: &str,
+        amount: Option<Decimal>,
+    ) -> Result<RefundResult, PaymentError> {
         let refund_id = format!("refund_{}", uuid::Uuid::new_v4().simple());
         let body = serde_json::json!({
             "refund_amount": amount.unwrap_or(Decimal::ZERO).to_string().parse::<f64>().unwrap_or(0.0),
@@ -183,7 +198,10 @@ impl PaymentGateway for CashfreeGateway {
         Ok(RefundResult {
             provider_ref: result["cf_refund_id"].as_str().unwrap_or("").to_string(),
             refunded_amount: amount.unwrap_or(Decimal::ZERO),
-            status: result["refund_status"].as_str().unwrap_or("pending").to_string(),
+            status: result["refund_status"]
+                .as_str()
+                .unwrap_or("pending")
+                .to_string(),
         })
     }
 }

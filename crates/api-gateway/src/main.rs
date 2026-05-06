@@ -1,12 +1,8 @@
-mod openapi;
-mod proxy;
-mod rate_limit;
-mod routing;
-mod ws_proxy;
-
+use api_gateway::{openapi, proxy, rate_limit, routing};
+use http::{Method, header};
 use shared::config::AppConfig;
+use std::net::SocketAddr;
 use std::sync::Arc;
-use http::{header, Method};
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 
 #[tokio::main]
@@ -47,6 +43,8 @@ async fn main() {
     let service_map = routing::ServiceMap::from_env();
     let rate_limiter = rate_limit::RateLimiter::new(redis_conn);
 
+    let trusted_proxies = Arc::new(proxy::trusted_proxies());
+
     let state = proxy::GatewayState {
         client: reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(300))
@@ -55,21 +53,38 @@ async fn main() {
             .expect("reqwest client"),
         services: Arc::new(service_map),
         rate_limiter: Arc::new(rate_limiter),
+        trusted_proxies,
     };
 
     let openapi_doc = openapi::openapi_spec();
 
-    let app = routing::create_router(state)
+    let app = api_gateway::routing::create_router(state)
         .merge(
             utoipa_swagger_ui::SwaggerUi::new("/swagger-ui")
                 .url("/api-docs/openapi.json", openapi_doc),
         )
-        .route("/metrics", axum::routing::get(shared::metrics::metrics_handler))
-        .layer(axum::middleware::from_fn(shared::metrics::metrics_middleware))
+        .route(
+            "/metrics",
+            axum::routing::get(shared::metrics::metrics_handler),
+        )
+        .layer(axum::middleware::from_fn(
+            shared::metrics::metrics_middleware,
+        ))
+        .layer(axum::middleware::from_fn(
+            api_gateway::security::metrics_protection,
+        ))
+        .layer(axum::middleware::from_fn(
+            api_gateway::security::security_headers,
+        ))
         .layer(cors);
     let addr = config.listen_addr();
     tracing::info!("api-gateway listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .unwrap();
 }

@@ -26,6 +26,9 @@ Reescritura completa del backend de la red social Jungle (PHP) en **Rust**, con 
 | [Observabilidad](./docs/observability.md) | Prometheus, OpenTelemetry |
 | [Resiliencia](./docs/resilience.md) | Circuit breaker, retry, DLQ |
 | [Migración MySQL→PG](./docs/migration.md) | Herramienta de migración desde PHP |
+| [Matriz de Entorno](./docs/env-matrix.md) | Variables obligatorias por entorno y sensibilidad |
+| [Producción en Fly.io](./docs/production-flyio.md) | Guía de despliegue backend en Fly |
+| [Runbook de Despliegue](./docs/runbooks/deploy.md) | Procedimiento operativo con rollback |
 
 > Swagger UI interactivo: `http://localhost:8080/swagger-ui`
 

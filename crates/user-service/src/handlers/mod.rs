@@ -1,5 +1,7 @@
 pub mod addresses;
 pub mod extras;
+pub mod friend_lists;
+pub mod geocoding;
 pub mod health;
 pub mod professional;
 pub mod profile;

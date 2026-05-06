@@ -4,8 +4,8 @@ use serde_json::json;
 use std::collections::HashMap;
 
 use crate::gateway::{
-    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus,
-    PaymentStatusKind, RefundResult, WebhookEvent,
+    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
+    RefundResult, WebhookEvent,
 };
 
 pub struct PayPalGateway {
@@ -89,9 +89,7 @@ impl PaymentGateway for PayPalGateway {
 
         let redirect_url = body["links"]
             .as_array()
-            .and_then(|links| {
-                links.iter().find(|l| l["rel"].as_str() == Some("approve"))
-            })
+            .and_then(|links| links.iter().find(|l| l["rel"].as_str() == Some("approve")))
             .and_then(|l| l["href"].as_str())
             .unwrap_or("")
             .to_string();
@@ -110,7 +108,10 @@ impl PaymentGateway for PayPalGateway {
         // Capture the order
         let resp = self
             .client
-            .post(format!("{}/v2/checkout/orders/{}/capture", self.base_url, order_id))
+            .post(format!(
+                "{}/v2/checkout/orders/{}/capture",
+                self.base_url, order_id
+            ))
             .bearer_auth(&token)
             .header("Content-Type", "application/json")
             .send()
@@ -138,9 +139,51 @@ impl PaymentGateway for PayPalGateway {
         })
     }
 
-    async fn handle_webhook(&self, payload: &[u8], _signature: &str) -> Result<WebhookEvent, PaymentError> {
-        let body: serde_json::Value =
-            serde_json::from_slice(payload).map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+    async fn handle_webhook(
+        &self,
+        payload: &[u8],
+        signature: &str,
+    ) -> Result<WebhookEvent, PaymentError> {
+        // PayPal webhook verification via API call (mandatory).
+        let webhook_id = std::env::var("PAYPAL_WEBHOOK_ID")
+            .map_err(|_| PaymentError::ProviderError("PAYPAL_WEBHOOK_ID not configured".into()))?;
+        if webhook_id.is_empty() {
+            return Err(PaymentError::ProviderError("PAYPAL_WEBHOOK_ID is empty".into()));
+        }
+        if signature.is_empty() {
+            return Err(PaymentError::InvalidSignature);
+        }
+
+        let verify_headers: serde_json::Value = serde_json::from_str(signature)
+            .map_err(|_| PaymentError::InvalidSignature)?;
+        let token = self.get_access_token().await?;
+        let verify_body = serde_json::json!({
+            "auth_algo": verify_headers.get("paypal-auth-algo").and_then(|v| v.as_str()).unwrap_or(""),
+            "cert_url": verify_headers.get("paypal-cert-url").and_then(|v| v.as_str()).unwrap_or(""),
+            "transmission_id": verify_headers.get("paypal-transmission-id").and_then(|v| v.as_str()).unwrap_or(""),
+            "transmission_sig": verify_headers.get("paypal-transmission-sig").and_then(|v| v.as_str()).unwrap_or(""),
+            "transmission_time": verify_headers.get("paypal-transmission-time").and_then(|v| v.as_str()).unwrap_or(""),
+            "webhook_id": &webhook_id,
+            "webhook_event": serde_json::from_slice::<serde_json::Value>(payload)
+                .unwrap_or(serde_json::Value::Null),
+        });
+
+        let verify_resp = self
+            .client
+            .post(format!("{}/v1/notifications/verify-webhook-signature", self.base_url))
+            .bearer_auth(&token)
+            .json(&verify_body)
+            .send()
+            .await?;
+
+        let verify_body: serde_json::Value = verify_resp.json().await?;
+        let verification_status = verify_body["verification_status"].as_str().unwrap_or("");
+        if verification_status != "SUCCESS" {
+            return Err(PaymentError::InvalidSignature);
+        }
+
+        let body: serde_json::Value = serde_json::from_slice(payload)
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         let event_type = body["event_type"].as_str().unwrap_or("").to_string();
         let resource = &body["resource"];
@@ -166,7 +209,11 @@ impl PaymentGateway for PayPalGateway {
         })
     }
 
-    async fn refund(&self, capture_id: &str, amount: Option<Decimal>) -> Result<RefundResult, PaymentError> {
+    async fn refund(
+        &self,
+        capture_id: &str,
+        amount: Option<Decimal>,
+    ) -> Result<RefundResult, PaymentError> {
         let token = self.get_access_token().await?;
 
         let body = if let Some(amt) = amount {
@@ -177,7 +224,10 @@ impl PaymentGateway for PayPalGateway {
 
         let resp = self
             .client
-            .post(format!("{}/v2/payments/captures/{}/refund", self.base_url, capture_id))
+            .post(format!(
+                "{}/v2/payments/captures/{}/refund",
+                self.base_url, capture_id
+            ))
             .bearer_auth(&token)
             .json(&body)
             .send()
@@ -188,7 +238,10 @@ impl PaymentGateway for PayPalGateway {
         Ok(RefundResult {
             provider_ref: resp_body["id"].as_str().unwrap_or("").to_string(),
             refunded_amount: amount.unwrap_or(Decimal::ZERO),
-            status: resp_body["status"].as_str().unwrap_or("unknown").to_string(),
+            status: resp_body["status"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_string(),
         })
     }
 }

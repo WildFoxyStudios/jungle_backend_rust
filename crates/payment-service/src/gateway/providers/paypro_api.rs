@@ -3,16 +3,22 @@ use rust_decimal::Decimal;
 use std::collections::HashMap;
 
 use crate::gateway::{
-    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus,
-    PaymentStatusKind, RefundResult, WebhookEvent,
+    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
+    RefundResult, WebhookEvent,
 };
 
-pub struct PayProBitcoinGateway {
+/// PayPro Global API gateway. The original WoWonder integration named this
+/// "PayPro Bitcoin" but the underlying endpoint (`api.payproglobal.com/v2`)
+/// is provider-agnostic and supports the full PayPro catalogue (including
+/// crypto and conventional rails). The `provider_name` and webhook URL
+/// remain `paypro_bitcoin` to preserve compatibility with existing
+/// merchant configurations and webhooks already registered upstream.
+pub struct PayProApiGateway {
     api_key: String,
     client: reqwest::Client,
 }
 
-impl PayProBitcoinGateway {
+impl PayProApiGateway {
     pub fn from_env() -> Self {
         Self {
             api_key: std::env::var("PAYPRO_API_KEY").unwrap_or_default(),
@@ -22,7 +28,7 @@ impl PayProBitcoinGateway {
 }
 
 #[async_trait]
-impl PaymentGateway for PayProBitcoinGateway {
+impl PaymentGateway for PayProApiGateway {
     fn provider_name(&self) -> &'static str {
         "paypro_bitcoin"
     }
@@ -50,7 +56,10 @@ impl PaymentGateway for PayProBitcoinGateway {
 
         if let Some(err) = result.get("error") {
             return Err(PaymentError::ProviderError(
-                err["message"].as_str().unwrap_or("PayPro error").to_string(),
+                err["message"]
+                    .as_str()
+                    .unwrap_or("PayPro error")
+                    .to_string(),
             ));
         }
 
@@ -65,7 +74,10 @@ impl PaymentGateway for PayProBitcoinGateway {
     async fn verify_payment(&self, payment_id: &str) -> Result<PaymentStatus, PaymentError> {
         let resp = self
             .client
-            .get(format!("https://api.payproglobal.com/v2/payments/{}", payment_id))
+            .get(format!(
+                "https://api.payproglobal.com/v2/payments/{}",
+                payment_id
+            ))
             .bearer_auth(&self.api_key)
             .send()
             .await?;
@@ -83,14 +95,20 @@ impl PaymentGateway for PayProBitcoinGateway {
         Ok(PaymentStatus {
             provider_ref: payment_id.to_string(),
             status,
-            amount: result["amount"].as_f64().map(|a| Decimal::try_from(a).unwrap_or(Decimal::ZERO)),
+            amount: result["amount"]
+                .as_f64()
+                .map(|a| Decimal::try_from(a).unwrap_or(Decimal::ZERO)),
             currency: result["currency"].as_str().map(|s| s.to_string()),
         })
     }
 
-    async fn handle_webhook(&self, payload: &[u8], _signature: &str) -> Result<WebhookEvent, PaymentError> {
-        let body: serde_json::Value =
-            serde_json::from_slice(payload).map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+    async fn handle_webhook(
+        &self,
+        payload: &[u8],
+        _signature: &str,
+    ) -> Result<WebhookEvent, PaymentError> {
+        let body: serde_json::Value = serde_json::from_slice(payload)
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         let status = match body["status"].as_str() {
             Some("completed") | Some("confirmed") => PaymentStatusKind::Completed,
@@ -102,13 +120,19 @@ impl PaymentGateway for PayProBitcoinGateway {
             event_type: body["event"].as_str().unwrap_or("payment").to_string(),
             provider_ref: body["payment_id"].as_str().unwrap_or("").to_string(),
             status,
-            amount: body["amount"].as_f64().map(|a| Decimal::try_from(a).unwrap_or(Decimal::ZERO)),
+            amount: body["amount"]
+                .as_f64()
+                .map(|a| Decimal::try_from(a).unwrap_or(Decimal::ZERO)),
             currency: body["currency"].as_str().map(|s| s.to_string()),
             metadata: HashMap::new(),
         })
     }
 
-    async fn refund(&self, _tx_id: &str, _amount: Option<Decimal>) -> Result<RefundResult, PaymentError> {
+    async fn refund(
+        &self,
+        _tx_id: &str,
+        _amount: Option<Decimal>,
+    ) -> Result<RefundResult, PaymentError> {
         // Bitcoin payments are irreversible — refunds must be handled manually
         Err(PaymentError::ProviderError(
             "Bitcoin payments are irreversible. Refunds must be processed manually.".to_string(),

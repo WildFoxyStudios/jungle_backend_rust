@@ -1,0 +1,51 @@
+name: Lighthouse CI
+
+# Performance / accessibility / SEO budgets for the public web app.
+# QA-3 from full-migration.md §17 — run on PRs that touch the frontend
+# so regressions are caught before merge.
+
+on:
+  pull_request:
+    paths:
+      - "frontend/**"
+      - "backend/.github/workflows/lighthouse.yml"
+  workflow_dispatch:
+
+jobs:
+  lighthouse:
+    name: Lighthouse audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: pnpm install --frozen-lockfile
+
+      - name: Build web app
+        working-directory: frontend
+        env:
+          NEXT_TELEMETRY_DISABLED: "1"
+          NEXT_PUBLIC_API_URL: "http://localhost:3001"
+        run: pnpm --filter @jungle/web build
+
+      - name: Install Lighthouse CI
+        run: npm install -g @lhci/cli@0.13.x
+
+      - name: Run Lighthouse CI
+        working-directory: frontend
+        env:
+          LHCI_GITHUB_APP_TOKEN: ${{ secrets.LHCI_GITHUB_APP_TOKEN }}
+        run: lhci autorun --config=../backend/.github/workflows/lighthouserc.json
+        continue-on-error: true

@@ -1,11 +1,14 @@
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use serde::{Deserialize, Serialize};
+use time::format_description::well_known::Rfc3339;
+use time::macros::format_description;
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
+    events::DomainEvent,
     models::{AuthUserResponse, PublicUser, User},
 };
 use validator::Validate;
@@ -14,13 +17,12 @@ pub async fn get_me(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let user = sqlx::query_as::<_, User>(
-        "SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(auth.user_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound("User not found".into()))?;
+    let user =
+        sqlx::query_as::<_, User>("SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL")
+            .bind(auth.user_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or(ApiError::NotFound("User not found".into()))?;
 
     let resp = AuthUserResponse::from(&user);
     Ok(Json(serde_json::json!({ "data": resp })))
@@ -59,7 +61,10 @@ pub async fn get_user(
 
     // Check online status
     let time_threshold = time::OffsetDateTime::now_utc() - time::Duration::seconds(60);
-    public.is_online = user.last_seen.map(|ls| ls > time_threshold).unwrap_or(false);
+    public.is_online = user
+        .last_seen
+        .map(|ls| ls > time_threshold)
+        .unwrap_or(false);
 
     // Follower/following counts
     let follower_count: i64 = sqlx::query_scalar(
@@ -107,13 +112,71 @@ pub async fn get_user(
         false
     };
 
+    let (is_blocked, is_muted) = if let Some(ref viewer) = auth.0 {
+        let blocked: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM blocks WHERE blocker_id = $1 AND blocked_id = $2)",
+        )
+        .bind(viewer.user_id)
+        .bind(user.id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(false);
+        let muted: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM mutes WHERE user_id = $1 AND muted_id = $2)",
+        )
+        .bind(viewer.user_id)
+        .bind(user.id)
+        .fetch_one(&state.db)
+        .await
+        .unwrap_or(false);
+        (blocked, muted)
+    } else {
+        (false, false)
+    };
+
+    let post_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM posts WHERE user_id = $1 AND deleted_at IS NULL",
+    )
+    .bind(user.id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+
+    let created_at = user
+        .created_at
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string());
+    let updated_at = user
+        .updated_at
+        .format(&Rfc3339)
+        .unwrap_or_else(|_| created_at.clone());
+
     Ok(Json(serde_json::json!({
         "data": {
+            "id": user.id,
             "user": public,
             "follower_count": follower_count,
             "following_count": following_count,
+            "post_count": post_count,
+            "created_at": created_at,
+            "updated_at": updated_at,
             "is_following": is_following,
             "is_following_me": is_following_me,
+            "email": "",
+            "gender": user.gender,
+            "birthday": user.birthday.map(|d| d.to_string()),
+            "website": user.website,
+            "location": user.city,
+            "school": user.school,
+            "working": user.working,
+            "working_link": user.working_link,
+            "social_links": user.social_links,
+            "is_admin": user.is_admin,
+            "is_banned": false,
+            "two_factor_enabled": user.two_factor_enabled,
+            "email_verified": user.email_verified,
+            "is_muted": is_muted,
+            "is_blocked": is_blocked,
         }
     })))
 }
@@ -122,6 +185,8 @@ pub async fn get_user(
 pub struct UpdateProfileRequest {
     #[validate(length(min = 3, max = 30))]
     pub username: Option<String>,
+    #[validate(length(max = 50))]
+    pub phone: Option<String>,
     #[validate(length(max = 50))]
     pub first_name: Option<String>,
     #[validate(length(max = 50))]
@@ -140,6 +205,8 @@ pub struct UpdateProfileRequest {
     pub school: Option<String>,
     #[validate(length(max = 200))]
     pub working: Option<String>,
+    #[validate(length(max = 255))]
+    pub working_link: Option<String>,
     pub language: Option<String>,
 }
 
@@ -169,37 +236,73 @@ pub async fn update_me(
     // Accept both "location" and "city" from the frontend
     let city_value = req.location.as_ref().or(req.city.as_ref());
 
+    static DAY_FMT: &[time::format_description::FormatItem<'static>] =
+        format_description!("[year]-[month]-[day]");
+
+    let birthday: Option<time::Date> = match req.birthday.as_ref() {
+        None => None,
+        Some(s) => {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(time::Date::parse(t, DAY_FMT).map_err(|_| {
+                    ApiError::BadRequest("birthday must be YYYY-MM-DD".into())
+                })?)
+            }
+        }
+    };
+
     let user = sqlx::query_as::<_, User>(
         r#"UPDATE users SET
             username = COALESCE($2, username),
-            first_name = COALESCE($3, first_name),
-            last_name = COALESCE($4, last_name),
-            about = COALESCE($5, about),
-            gender = COALESCE($6, gender),
-            birthday = COALESCE($7, birthday),
-            city = COALESCE($8, city),
-            website = COALESCE($9, website),
-            school = COALESCE($10, school),
-            working = COALESCE($11, working),
-            language = COALESCE($12, language),
+            phone_number = COALESCE($3, phone_number),
+            first_name = COALESCE($4, first_name),
+            last_name = COALESCE($5, last_name),
+            about = COALESCE($6, about),
+            gender = COALESCE($7, gender),
+            birthday = COALESCE($8, birthday),
+            city = COALESCE($9, city),
+            website = COALESCE($10, website),
+            school = COALESCE($11, school),
+            working = COALESCE($12, working),
+            working_link = COALESCE($13, working_link),
+            language = COALESCE($14, language),
             updated_at = NOW()
         WHERE id = $1 AND deleted_at IS NULL
         RETURNING *"#,
     )
     .bind(auth.user_id)
     .bind(&req.username)
+    .bind(req.phone.as_deref().map(str::trim))
     .bind(&req.first_name)
     .bind(&req.last_name)
     .bind(&req.about)
     .bind(&req.gender)
-    .bind(&req.birthday)
+    .bind(birthday)
     .bind(city_value)
     .bind(&req.website)
     .bind(&req.school)
     .bind(&req.working)
+    .bind(req.working_link.as_deref().map(str::trim))
     .bind(&req.language)
     .fetch_one(&state.db)
     .await?;
+
+    // Publish a NameChanged event whenever first_name or last_name is updated,
+    // so other sessions/followers can refresh cached display names live.
+    if (req.first_name.is_some() || req.last_name.is_some())
+        && let Err(e) = state
+            .event_bus
+            .publish(&DomainEvent::NameChanged {
+                user_id: user.id,
+                first_name: user.first_name.clone(),
+                last_name: user.last_name.clone(),
+            })
+            .await
+    {
+        tracing::warn!(user_id = user.id, error = %e, "failed to publish NameChanged");
+    }
 
     let resp = AuthUserResponse::from(&user);
     Ok(Json(serde_json::json!({ "data": resp })))
@@ -220,6 +323,17 @@ pub async fn update_avatar(
         .bind(auth.user_id)
         .execute(&state.db)
         .await?;
+
+    if let Err(e) = state
+        .event_bus
+        .publish(&DomainEvent::AvatarChanged {
+            user_id: auth.user_id,
+            url: req.avatar_url.clone(),
+        })
+        .await
+    {
+        tracing::warn!(user_id = auth.user_id, error = %e, "failed to publish AvatarChanged");
+    }
 
     Ok(Json(serde_json::json!({
         "data": { "avatar": req.avatar_url }
@@ -250,15 +364,15 @@ pub async fn update_cover(
 /// PUT /v1/users/me/social-links — Update public social profile links (PHP: update_socialinks_setting.php)
 #[derive(Debug, Deserialize, Serialize)]
 pub struct SocialLinksRequest {
-    pub facebook:  Option<String>,
-    pub twitter:   Option<String>,
-    pub linkedin:  Option<String>,
+    pub facebook: Option<String>,
+    pub twitter: Option<String>,
+    pub linkedin: Option<String>,
     pub instagram: Option<String>,
-    pub youtube:   Option<String>,
-    pub github:    Option<String>,
-    pub vk:        Option<String>,
-    pub tiktok:    Option<String>,
-    pub website:   Option<String>,
+    pub youtube: Option<String>,
+    pub github: Option<String>,
+    pub vk: Option<String>,
+    pub tiktok: Option<String>,
+    pub website: Option<String>,
 }
 
 pub async fn update_social_links(
@@ -278,13 +392,11 @@ pub async fn update_social_links(
         "website":   req.website.as_deref().unwrap_or("")
     });
 
-    sqlx::query(
-        "UPDATE users SET social_links = $1, updated_at = NOW() WHERE id = $2",
-    )
-    .bind(&links)
-    .bind(auth.user_id)
-    .execute(&state.db)
-    .await?;
+    sqlx::query("UPDATE users SET social_links = $1, updated_at = NOW() WHERE id = $2")
+        .bind(&links)
+        .bind(auth.user_id)
+        .execute(&state.db)
+        .await?;
 
     // Also update the website column (for backward compat)
     if let Some(ref site) = req.website {
@@ -312,7 +424,9 @@ pub async fn get_social_links(
     .await?
     .flatten();
 
-    Ok(Json(serde_json::json!({ "data": links.unwrap_or(serde_json::json!({})) })))
+    Ok(Json(
+        serde_json::json!({ "data": links.unwrap_or(serde_json::json!({})) }),
+    ))
 }
 
 /// GET /v1/users/{username}/popover
@@ -354,8 +468,18 @@ pub async fn get_user_popover(
     .fetch_optional(&state.db)
     .await?;
 
-    let (id, username, first_name, last_name, avatar, about, is_verified, followers, following, posts) =
-        row.ok_or(ApiError::NotFound("User not found".into()))?;
+    let (
+        id,
+        username,
+        first_name,
+        last_name,
+        avatar,
+        about,
+        is_verified,
+        followers,
+        following,
+        posts,
+    ) = row.ok_or(ApiError::NotFound("User not found".into()))?;
 
     let is_following = if let Some(my_id) = me_id {
         sqlx::query_scalar::<_, bool>(

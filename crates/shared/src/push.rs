@@ -184,9 +184,10 @@ impl PushSender {
         });
 
         if let Some(extra) = data
-            && let Some(obj) = payload.as_object_mut() {
-                obj.insert("data".to_string(), extra);
-            }
+            && let Some(obj) = payload.as_object_mut()
+        {
+            obj.insert("data".to_string(), extra);
+        }
 
         let resp = self
             .client
@@ -221,7 +222,7 @@ impl PushSender {
 
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         let header = serde_json::json!({"alg": "RS256", "typ": "JWT"});
@@ -233,20 +234,16 @@ impl PushSender {
             "exp": now + 3600,
         });
 
-        let header_b64 = base64_url_encode(&serde_json::to_vec(&header).unwrap());
-        let claims_b64 = base64_url_encode(&serde_json::to_vec(&claims).unwrap());
+        let header_b64 = base64_url_encode(&serde_json::to_vec(&header).unwrap_or_default());
+        let claims_b64 = base64_url_encode(&serde_json::to_vec(&claims).unwrap_or_default());
         let signing_input = format!("{}.{}", header_b64, claims_b64);
 
         let key = jsonwebtoken::EncodingKey::from_rsa_pem(private_key.as_bytes())
             .map_err(|e| format!("Invalid RSA key: {}", e))?;
 
         let jwt_header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::RS256);
-        let token = jsonwebtoken::encode(
-            &jwt_header,
-            &claims,
-            &key,
-        )
-        .map_err(|e| format!("JWT sign error: {}", e))?;
+        let token = jsonwebtoken::encode(&jwt_header, &claims, &key)
+            .map_err(|e| format!("JWT sign error: {}", e))?;
 
         let _ = signing_input;
 
@@ -275,7 +272,7 @@ impl PushSender {
     fn create_apns_jwt(&self, config: &ApnsConfig) -> Result<String, String> {
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_secs();
 
         let mut header = jsonwebtoken::Header::new(jsonwebtoken::Algorithm::ES256);
@@ -289,8 +286,7 @@ impl PushSender {
         let key = jsonwebtoken::EncodingKey::from_ec_pem(config.private_key_pem.as_bytes())
             .map_err(|e| format!("Invalid APNs key: {}", e))?;
 
-        jsonwebtoken::encode(&header, &claims, &key)
-            .map_err(|e| format!("APNs JWT error: {}", e))
+        jsonwebtoken::encode(&header, &claims, &key).map_err(|e| format!("APNs JWT error: {}", e))
     }
 }
 

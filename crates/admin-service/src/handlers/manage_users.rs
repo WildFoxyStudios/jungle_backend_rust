@@ -8,16 +8,10 @@ use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
     pagination::PaginationParams,
+    permissions::Permission,
 };
 use sqlx::FromRow;
 use time::OffsetDateTime;
-
-fn require_admin(auth: &AuthUser) -> Result<(), ApiError> {
-    if !auth.is_admin {
-        return Err(ApiError::Forbidden("".into()));
-    }
-    Ok(())
-}
 
 // ── Pro Members ────────────────────────────────────────────────────────────
 
@@ -39,7 +33,7 @@ pub async fn list_pro_members(
     auth: AuthUser,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePro, &state).await?;
 
     let limit = params.limit();
     let cursor_id = params.cursor_id().unwrap_or(i64::MAX);
@@ -76,7 +70,7 @@ pub async fn list_online_users(
     auth: AuthUser,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ViewUsers, &state).await?;
 
     let limit = params.limit();
     let cursor_id = params.cursor_id().unwrap_or(i64::MAX);
@@ -127,7 +121,7 @@ pub async fn list_referrals(
     auth: AuthUser,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ViewUsers, &state).await?;
 
     let limit = params.limit();
     let cursor_id = params.cursor_id().unwrap_or(i64::MAX);
@@ -170,7 +164,7 @@ pub async fn list_user_ads(
     auth: AuthUser,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageAds, &state).await?;
 
     let limit = params.limit();
     let cursor_id = params.cursor_id().unwrap_or(i64::MAX);
@@ -193,7 +187,7 @@ pub async fn toggle_user_ad(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageAds, &state).await?;
 
     sqlx::query("UPDATE user_ads SET is_active = NOT is_active WHERE id = $1")
         .bind(id)
@@ -207,7 +201,7 @@ pub async fn delete_user_ad(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageAds, &state).await?;
 
     sqlx::query("DELETE FROM user_ads WHERE id = $1")
         .bind(id)
@@ -234,7 +228,7 @@ pub async fn list_stories(
     auth: AuthUser,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePosts, &state).await?;
 
     let limit = params.limit();
     let cursor_id = params.cursor_id().unwrap_or(i64::MAX);
@@ -259,7 +253,7 @@ pub async fn hide_story(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePosts, &state).await?;
 
     sqlx::query("UPDATE stories SET admin_hidden = TRUE WHERE id = $1")
         .bind(id)
@@ -273,7 +267,7 @@ pub async fn delete_story(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePosts, &state).await?;
 
     sqlx::query("DELETE FROM stories WHERE id = $1")
         .bind(id)
@@ -301,7 +295,7 @@ pub async fn list_all_posts(
     auth: AuthUser,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePosts, &state).await?;
 
     let limit = params.limit();
     let cursor_id = params.cursor_id().unwrap_or(i64::MAX);
@@ -337,7 +331,7 @@ pub async fn list_all_offers(
     auth: AuthUser,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePosts, &state).await?;
 
     let limit = params.limit();
     let cursor_id = params.cursor_id().unwrap_or(i64::MAX);
@@ -359,7 +353,7 @@ pub async fn delete_offer(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePosts, &state).await?;
 
     sqlx::query("DELETE FROM offers WHERE id = $1")
         .bind(id)
@@ -385,7 +379,7 @@ pub async fn list_all_orders(
     auth: AuthUser,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageProducts, &state).await?;
 
     let limit = params.limit();
     let cursor_id = params.cursor_id().unwrap_or(i64::MAX);
@@ -419,7 +413,7 @@ pub async fn list_all_reviews(
     auth: AuthUser,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageProducts, &state).await?;
 
     let limit = params.limit();
     let cursor_id = params.cursor_id().unwrap_or(i64::MAX);
@@ -441,7 +435,7 @@ pub async fn delete_review(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageProducts, &state).await?;
 
     sqlx::query("DELETE FROM product_reviews WHERE id = $1")
         .bind(id)
@@ -468,7 +462,7 @@ pub async fn list_refund_requests(
     auth: AuthUser,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePayments, &state).await?;
 
     let limit = params.limit();
     let cursor_id = params.cursor_id().unwrap_or(i64::MAX);
@@ -490,7 +484,7 @@ pub async fn approve_refund(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePayments, &state).await?;
 
     let mut tx = state.db.begin().await?;
 
@@ -522,7 +516,7 @@ pub async fn reject_refund(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePayments, &state).await?;
 
     let result = sqlx::query("UPDATE refund_requests SET status = 2 WHERE id = $1 AND status = 0")
         .bind(id)
@@ -555,7 +549,7 @@ pub async fn send_mass_notification(
     auth: AuthUser,
     Json(req): Json<MassNotificationRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     if req.title.trim().is_empty() || req.message.trim().is_empty() {
         return Err(ApiError::BadRequest("title and message are required".into()));
@@ -621,7 +615,7 @@ pub async fn list_mass_notifications(
     auth: AuthUser,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     let limit = params.limit();
     let cursor_id = params.cursor_id().unwrap_or(i64::MAX);
@@ -644,7 +638,7 @@ pub async fn generate_sitemap(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     // Gather counts
     let user_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM users WHERE deleted_at IS NULL AND is_active = TRUE")
@@ -695,7 +689,7 @@ pub async fn list_fake_users(
     auth: AuthUser,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageUsers, &state).await?;
 
     let limit = params.limit();
     let cursor_id = params.cursor_id().unwrap_or(i64::MAX);
@@ -731,7 +725,7 @@ pub async fn create_fake_user(
     auth: AuthUser,
     Json(req): Json<CreateFakeUserRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageUsers, &state).await?;
 
     // Generate a random password hash (fake users don't login)
     let fake_hash = "$argon2id$v=19$m=19456,t=2,p=1$fake_user_no_login$0000000000000000000000";
@@ -772,7 +766,7 @@ pub async fn list_api_keys(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageApiKeys, &state).await?;
 
     let rows = sqlx::query_as::<_, ApiKeyRow>(
         "SELECT id, name, api_key, permissions, is_active, last_used, created_at FROM api_access_keys ORDER BY id DESC",
@@ -794,7 +788,7 @@ pub async fn create_api_key(
     auth: AuthUser,
     Json(req): Json<CreateApiKeyRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageApiKeys, &state).await?;
 
     let api_key = format!("wk_{}", uuid::Uuid::new_v4().to_string().replace('-', ""));
     let secret_key = format!("ws_{}", uuid::Uuid::new_v4().to_string().replace('-', ""));
@@ -825,7 +819,7 @@ pub async fn toggle_api_key(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageApiKeys, &state).await?;
 
     sqlx::query("UPDATE api_access_keys SET is_active = NOT is_active WHERE id = $1")
         .bind(id)
@@ -839,7 +833,7 @@ pub async fn delete_api_key(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePosts, &state).await?;
 
     sqlx::query("DELETE FROM api_access_keys WHERE id = $1")
         .bind(id)

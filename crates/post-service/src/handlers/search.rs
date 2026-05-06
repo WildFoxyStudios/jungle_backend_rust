@@ -1,12 +1,13 @@
 use axum::{
-    extract::{Query, State},
     Json,
+    extract::{Query, State},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
-    auth::{AppState, AuthUser},
+    auth::{AppState, AuthUser, OptionalAuth},
     errors::ApiError,
+    search::SearchUserFilters,
 };
 use sqlx::FromRow;
 use time::OffsetDateTime;
@@ -16,20 +17,40 @@ pub struct SearchQuery {
     pub q: String,
     pub r#type: Option<String>,
     pub limit: Option<i64>,
+    #[serde(default)]
+    pub gender: Option<String>,
+    #[serde(default)]
+    pub verified_only: Option<bool>,
+    #[serde(default)]
+    pub has_photo: Option<bool>,
+    #[serde(default)]
+    pub age_min: Option<i32>,
+    #[serde(default)]
+    pub age_max: Option<i32>,
 }
 
 /// GET /v1/search — global search across all entity types
 pub async fn global_search(
     State(state): State<AppState>,
+    OptionalAuth(auth): OptionalAuth,
     Query(params): Query<SearchQuery>,
 ) -> Result<Json<Value>, ApiError> {
     let limit = params.limit.unwrap_or(20).clamp(1, 50);
+    let viewer_id = auth.map(|a| a.user_id);
+    let user_filters = SearchUserFilters::from_optional(
+        params.gender.clone(),
+        params.verified_only,
+        params.has_photo,
+        params.age_min,
+        params.age_max,
+    );
     shared::search::search_all(
         &state.db,
         &params.q,
         params.r#type.as_deref(),
-        None,
+        viewer_id,
         limit,
+        user_filters,
     )
     .await
 }
@@ -56,7 +77,17 @@ pub async fn save_recent_search(
     auth: AuthUser,
     Json(req): Json<SaveRecentSearchRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let valid_types = ["user", "page", "group", "hashtag", "post"];
+    let valid_types = [
+        "user",
+        "page",
+        "group",
+        "hashtag",
+        "post",
+        "blog",
+        "product",
+        "event",
+        "reel",
+    ];
     if !valid_types.contains(&req.search_type.as_str()) {
         return Err(ApiError::BadRequest("Invalid search_type".into()));
     }

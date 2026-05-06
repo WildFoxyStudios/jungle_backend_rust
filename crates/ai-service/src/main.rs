@@ -4,11 +4,11 @@ mod handlers;
 mod providers;
 mod routes;
 
-use http::{header, Method};
+use crate::providers::ProviderRegistry;
+use http::{Method, header};
 use shared::{auth::AppState, config::AppConfig, db, events};
 use std::sync::Arc;
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
-use crate::providers::ProviderRegistry;
 
 #[tokio::main]
 async fn main() {
@@ -47,13 +47,7 @@ async fn main() {
         ]))
         .allow_credentials(true);
 
-    let event_bus: Arc<dyn events::EventBus> = match events::NatsEventBus::connect(&config.nats_url).await {
-        Ok(bus) => Arc::new(bus),
-        Err(e) => {
-            tracing::warn!("NATS unavailable: {e}");
-            Arc::new(events::NoopEventBus)
-        }
-    };
+    let event_bus = events::connect_event_bus(&config.nats_url).await;
 
     // Encryption key derived from INTERNAL_SERVICE_KEY (fallback to JWT secret)
     let master_key = std::env::var("INTERNAL_SERVICE_KEY")
@@ -62,7 +56,11 @@ async fn main() {
     let enc_key = shared::crypto::derive_key(master_key.as_bytes()).to_vec();
 
     let http = reqwest::Client::new();
-    let registry = Arc::new(ProviderRegistry::new(pool.clone(), http.clone(), enc_key.clone()));
+    let registry = Arc::new(ProviderRegistry::new(
+        pool.clone(),
+        http.clone(),
+        enc_key.clone(),
+    ));
 
     let app_state = AppState {
         db: pool,
@@ -79,8 +77,13 @@ async fn main() {
     };
 
     let app = routes::create_router(state)
-        .route("/metrics", axum::routing::get(shared::metrics::metrics_handler))
-        .layer(axum::middleware::from_fn(shared::metrics::metrics_middleware))
+        .route(
+            "/metrics",
+            axum::routing::get(shared::metrics::metrics_handler),
+        )
+        .layer(axum::middleware::from_fn(
+            shared::metrics::metrics_middleware,
+        ))
         .layer(cors);
     let addr = config.listen_addr();
     tracing::info!("ai-service listening on {}", addr);

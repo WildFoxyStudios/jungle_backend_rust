@@ -8,16 +8,10 @@ use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
     pagination::PaginationParams,
+    permissions::Permission,
 };
 use sqlx::FromRow;
 use time::OffsetDateTime;
-
-fn require_admin(auth: &AuthUser) -> Result<(), ApiError> {
-    if !auth.is_admin {
-        return Err(ApiError::Forbidden("".into()));
-    }
-    Ok(())
-}
 
 #[derive(Debug, Deserialize)]
 pub struct UserSearchQuery {
@@ -56,7 +50,7 @@ pub async fn list_users(
     auth: AuthUser,
     Query(q): Query<UserSearchQuery>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ViewUsers, &state).await?;
     let limit = q.pagination.limit();
     let cursor = q.pagination.cursor_id();
 
@@ -122,7 +116,7 @@ pub async fn get_user(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ViewUsers, &state).await?;
 
     let user = sqlx::query_as::<_, AdminUserRow>(
         "SELECT id, uuid, username, email, first_name, last_name, avatar, is_admin, is_pro, is_verified, active, created_at, last_login_at FROM users WHERE id = $1",
@@ -141,7 +135,7 @@ pub async fn update_user(
     Path(id): Path<i64>,
     Json(req): Json<AdminUpdateUserRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageUsers, &state).await?;
 
     sqlx::query(
         r#"
@@ -168,7 +162,7 @@ pub async fn ban_user(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageUsers, &state).await?;
 
     sqlx::query("UPDATE users SET active = FALSE, updated_at = NOW() WHERE id = $1")
         .bind(id)
@@ -183,7 +177,7 @@ pub async fn unban_user(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageUsers, &state).await?;
 
     sqlx::query("UPDATE users SET active = TRUE, updated_at = NOW() WHERE id = $1")
         .bind(id)
@@ -198,7 +192,7 @@ pub async fn verify_user(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::VerifyUsers, &state).await?;
 
     sqlx::query("UPDATE users SET is_verified = TRUE, updated_at = NOW() WHERE id = $1")
         .bind(id)
@@ -213,7 +207,7 @@ pub async fn delete_user(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageUsers, &state).await?;
 
     // Soft delete — deactivate
     sqlx::query("UPDATE users SET active = FALSE, email = CONCAT('deleted_', id, '@deleted.local'), updated_at = NOW() WHERE id = $1")

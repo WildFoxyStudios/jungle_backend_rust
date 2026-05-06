@@ -3,8 +3,8 @@ use rust_decimal::Decimal;
 use std::collections::HashMap;
 
 use crate::gateway::{
-    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus,
-    PaymentStatusKind, RefundResult, WebhookEvent,
+    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
+    RefundResult, WebhookEvent,
 };
 
 pub struct YooMoneyGateway {
@@ -57,9 +57,16 @@ impl PaymentGateway for YooMoneyGateway {
 
         let result: serde_json::Value = resp.json().await?;
 
-        if result.get("type").filter(|t| t.as_str() == Some("error")).is_some() {
+        if result
+            .get("type")
+            .filter(|t| t.as_str() == Some("error"))
+            .is_some()
+        {
             return Err(PaymentError::ProviderError(
-                result["description"].as_str().unwrap_or("YooMoney error").to_string(),
+                result["description"]
+                    .as_str()
+                    .unwrap_or("YooMoney error")
+                    .to_string(),
             ));
         }
 
@@ -77,7 +84,10 @@ impl PaymentGateway for YooMoneyGateway {
     async fn verify_payment(&self, payment_id: &str) -> Result<PaymentStatus, PaymentError> {
         let resp = self
             .client
-            .get(format!("https://api.yookassa.ru/v3/payments/{}", payment_id))
+            .get(format!(
+                "https://api.yookassa.ru/v3/payments/{}",
+                payment_id
+            ))
             .basic_auth(&self.shop_id, Some(&self.secret_key))
             .send()
             .await?;
@@ -101,9 +111,13 @@ impl PaymentGateway for YooMoneyGateway {
         })
     }
 
-    async fn handle_webhook(&self, payload: &[u8], _signature: &str) -> Result<WebhookEvent, PaymentError> {
-        let body: serde_json::Value =
-            serde_json::from_slice(payload).map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+    async fn handle_webhook(
+        &self,
+        payload: &[u8],
+        _signature: &str,
+    ) -> Result<WebhookEvent, PaymentError> {
+        let body: serde_json::Value = serde_json::from_slice(payload)
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         let event_type = body["event"].as_str().unwrap_or("").to_string();
         let object = &body["object"];
@@ -127,7 +141,11 @@ impl PaymentGateway for YooMoneyGateway {
         })
     }
 
-    async fn refund(&self, payment_id: &str, amount: Option<Decimal>) -> Result<RefundResult, PaymentError> {
+    async fn refund(
+        &self,
+        payment_id: &str,
+        amount: Option<Decimal>,
+    ) -> Result<RefundResult, PaymentError> {
         let idempotence_key = uuid::Uuid::new_v4().to_string();
 
         let mut body = serde_json::json!({

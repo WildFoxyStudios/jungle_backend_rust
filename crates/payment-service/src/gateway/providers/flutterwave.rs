@@ -2,13 +2,18 @@ use async_trait::async_trait;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 
+use crate::gateway::signature::verify_shared_secret;
 use crate::gateway::{
-    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus,
-    PaymentStatusKind, RefundResult, WebhookEvent,
+    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
+    RefundResult, WebhookEvent,
 };
 
 pub struct FlutterwaveGateway {
     secret_key: String,
+    /// Value configured as the "Secret Hash" in the Flutterwave dashboard; it
+    /// is echoed back by the provider as the `verif-hash` HTTP header on
+    /// every webhook delivery.
+    webhook_hash: String,
     client: reqwest::Client,
 }
 
@@ -16,6 +21,7 @@ impl FlutterwaveGateway {
     pub fn from_env() -> Self {
         Self {
             secret_key: std::env::var("FLUTTERWAVE_SECRET_KEY").unwrap_or_default(),
+            webhook_hash: std::env::var("FLUTTERWAVE_WEBHOOK_HASH").unwrap_or_default(),
             client: reqwest::Client::new(),
         }
     }
@@ -51,7 +57,10 @@ impl PaymentGateway for FlutterwaveGateway {
             .send()
             .await?;
 
-        let body: serde_json::Value = resp.json().await.map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         if body["status"].as_str() != Some("success") {
             return Err(PaymentError::ProviderError(
@@ -72,8 +81,16 @@ impl PaymentGateway for FlutterwaveGateway {
             "https://api.flutterwave.com/v3/transactions/{}/verify",
             reference
         );
-        let resp = self.client.get(&url).bearer_auth(&self.secret_key).send().await?;
-        let body: serde_json::Value = resp.json().await.map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+        let resp = self
+            .client
+            .get(&url)
+            .bearer_auth(&self.secret_key)
+            .send()
+            .await?;
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         let status = match body["data"]["status"].as_str() {
             Some("successful") => PaymentStatusKind::Completed,
@@ -91,9 +108,22 @@ impl PaymentGateway for FlutterwaveGateway {
         })
     }
 
-    async fn handle_webhook(&self, payload: &[u8], _signature: &str) -> Result<WebhookEvent, PaymentError> {
-        let body: serde_json::Value =
-            serde_json::from_slice(payload).map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+    /// Verify a Flutterwave webhook.
+    ///
+    /// Flutterwave does not HMAC the body; instead it sends the static
+    /// "Secret Hash" value configured in their dashboard as the `verif-hash`
+    /// HTTP header. We compare it in constant time to the value loaded from
+    /// `FLUTTERWAVE_WEBHOOK_HASH`.
+    /// Reference: https://developer.flutterwave.com/docs/webhooks
+    async fn handle_webhook(
+        &self,
+        payload: &[u8],
+        signature: &str,
+    ) -> Result<WebhookEvent, PaymentError> {
+        verify_shared_secret(self.webhook_hash.as_bytes(), signature)?;
+
+        let body: serde_json::Value = serde_json::from_slice(payload)
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         let data = &body["data"];
         let status = match data["status"].as_str() {
@@ -106,24 +136,44 @@ impl PaymentGateway for FlutterwaveGateway {
             event_type: body["event"].as_str().unwrap_or("unknown").to_string(),
             provider_ref: data["tx_ref"].as_str().unwrap_or("").to_string(),
             status,
-            amount: data["amount"].as_f64().map(|a| Decimal::try_from(a).unwrap_or(Decimal::ZERO)),
+            amount: data["amount"]
+                .as_f64()
+                .map(|a| Decimal::try_from(a).unwrap_or(Decimal::ZERO)),
             currency: data["currency"].as_str().map(|s| s.to_string()),
             metadata: HashMap::new(),
         })
     }
 
-    async fn refund(&self, tx_id: &str, amount: Option<Decimal>) -> Result<RefundResult, PaymentError> {
+    async fn refund(
+        &self,
+        tx_id: &str,
+        amount: Option<Decimal>,
+    ) -> Result<RefundResult, PaymentError> {
         let mut payload = serde_json::json!({});
         if let Some(amt) = amount {
             payload["amount"] = serde_json::json!(amt.to_string().parse::<f64>().unwrap_or(0.0));
         }
 
-        let url = format!("https://api.flutterwave.com/v3/transactions/{}/refund", tx_id);
-        let resp = self.client.post(&url).bearer_auth(&self.secret_key).json(&payload).send().await?;
-        let body: serde_json::Value = resp.json().await.map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+        let url = format!(
+            "https://api.flutterwave.com/v3/transactions/{}/refund",
+            tx_id
+        );
+        let resp = self
+            .client
+            .post(&url)
+            .bearer_auth(&self.secret_key)
+            .json(&payload)
+            .send()
+            .await?;
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         if body["status"].as_str() != Some("success") {
-            return Err(PaymentError::RefundFailed(body["message"].as_str().unwrap_or("Refund failed").into()));
+            return Err(PaymentError::RefundFailed(
+                body["message"].as_str().unwrap_or("Refund failed").into(),
+            ));
         }
 
         Ok(RefundResult {

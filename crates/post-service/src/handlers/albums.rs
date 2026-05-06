@@ -1,9 +1,9 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -81,7 +81,9 @@ pub async fn create_album(
         return Err(ApiError::BadRequest("album_name is required".into()));
     }
     if req.images.is_empty() {
-        return Err(ApiError::BadRequest("At least one image is required".into()));
+        return Err(ApiError::BadRequest(
+            "At least one image is required".into(),
+        ));
     }
 
     let mut tx = state.db.begin().await?;
@@ -99,19 +101,19 @@ pub async fn create_album(
 
     // Add album media
     for image_url in &req.images {
-        sqlx::query(
-            "INSERT INTO albums_media (post_id, user_id, image) VALUES ($1, $2, $3)",
-        )
-        .bind(album_id)
-        .bind(auth.user_id)
-        .bind(image_url.trim())
-        .execute(&mut *tx)
-        .await?;
+        sqlx::query("INSERT INTO albums_media (post_id, user_id, image) VALUES ($1, $2, $3)")
+            .bind(album_id)
+            .bind(auth.user_id)
+            .bind(image_url.trim())
+            .execute(&mut *tx)
+            .await?;
     }
 
     tx.commit().await?;
 
-    Ok(Json(json!({ "data": { "id": album_id, "album_name": req.album_name.trim() } })))
+    Ok(Json(
+        json!({ "data": { "id": album_id, "album_name": req.album_name.trim() } }),
+    ))
 }
 
 /// POST /v1/albums/{id}/images — add images to an existing album
@@ -136,14 +138,12 @@ pub async fn add_album_images(
 
     let mut count = 0i64;
     for image_url in &req.images {
-        sqlx::query(
-            "INSERT INTO albums_media (post_id, user_id, image) VALUES ($1, $2, $3)",
-        )
-        .bind(album_id)
-        .bind(auth.user_id)
-        .bind(image_url.trim())
-        .execute(&state.db)
-        .await?;
+        sqlx::query("INSERT INTO albums_media (post_id, user_id, image) VALUES ($1, $2, $3)")
+            .bind(album_id)
+            .bind(auth.user_id)
+            .bind(image_url.trim())
+            .execute(&state.db)
+            .await?;
         count += 1;
     }
 
@@ -192,14 +192,13 @@ pub async fn delete_album_image(
     auth: AuthUser,
     Path((album_id, image_id)): Path<(i64, i64)>,
 ) -> Result<Json<Value>, ApiError> {
-    let result = sqlx::query(
-        "DELETE FROM albums_media WHERE id = $1 AND post_id = $2 AND user_id = $3",
-    )
-    .bind(image_id)
-    .bind(album_id)
-    .bind(auth.user_id)
-    .execute(&state.db)
-    .await?;
+    let result =
+        sqlx::query("DELETE FROM albums_media WHERE id = $1 AND post_id = $2 AND user_id = $3")
+            .bind(image_id)
+            .bind(album_id)
+            .bind(auth.user_id)
+            .execute(&state.db)
+            .await?;
 
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound("Album image not found".into()));

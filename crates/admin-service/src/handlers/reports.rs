@@ -8,6 +8,7 @@ use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
     pagination::PaginationParams,
+    permissions::Permission,
 };
 use sqlx::FromRow;
 use time::OffsetDateTime;
@@ -24,17 +25,12 @@ pub struct ReportRow {
     pub created_at: OffsetDateTime,
 }
 
-fn require_admin(auth: &AuthUser) -> Result<(), ApiError> {
-    if !auth.is_admin { return Err(ApiError::Forbidden("".into())); }
-    Ok(())
-}
-
 pub async fn list_reports(
     State(state): State<AppState>,
     auth: AuthUser,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ModerateReports, &state).await?;
     let limit = params.limit();
     let cursor = params.cursor_id();
 
@@ -57,7 +53,7 @@ pub async fn get_report(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ModerateReports, &state).await?;
 
     let report = sqlx::query_as::<_, ReportRow>("SELECT * FROM reports WHERE id = $1")
         .bind(id)
@@ -73,7 +69,7 @@ pub async fn resolve_report(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ModerateReports, &state).await?;
 
     sqlx::query("UPDATE reports SET status = 'resolved' WHERE id = $1")
         .bind(id)
@@ -88,7 +84,7 @@ pub async fn dismiss_report(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ModerateReports, &state).await?;
 
     sqlx::query("UPDATE reports SET status = 'dismissed' WHERE id = $1")
         .bind(id)

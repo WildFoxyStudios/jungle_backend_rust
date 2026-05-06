@@ -115,11 +115,7 @@ where
 ///
 /// Attempts up to 3 publishes; on total failure the message is routed to
 /// `dlq.<original_subject>`.
-pub async fn publish_with_retry(
-    nats: &async_nats::Client,
-    subject: &str,
-    payload: &[u8],
-) {
+pub async fn publish_with_retry(nats: &async_nats::Client, subject: &str, payload: &[u8]) {
     for attempt in 0u32..3 {
         if nats
             .publish(subject.to_string(), payload.to_vec().into())
@@ -131,9 +127,7 @@ pub async fn publish_with_retry(
         tokio::time::sleep(std::time::Duration::from_millis(100 * 2u64.pow(attempt))).await;
     }
     let dlq_subject = format!("dlq.{}", subject);
-    let _ = nats
-        .publish(dlq_subject, payload.to_vec().into())
-        .await;
+    let _ = nats.publish(dlq_subject, payload.to_vec().into()).await;
     tracing::error!(subject, "Message sent to DLQ after 3 failures");
 }
 
@@ -196,8 +190,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_retry_with_backoff_succeeds_first_try() {
-        let result: Result<i32, String> =
-            retry_with_backoff(|| async { Ok(42) }, 3).await;
+        let result: Result<i32, String> = retry_with_backoff(|| async { Ok(42) }, 3).await;
         assert_eq!(result.unwrap(), 42);
     }
 

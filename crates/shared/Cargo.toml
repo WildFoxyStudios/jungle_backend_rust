@@ -45,3 +45,6 @@ opentelemetry = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 opentelemetry-otlp = { workspace = true }
 tracing-opentelemetry = { workspace = true }
+web-push-native = { workspace = true }
+base64ct = { workspace = true }
+http = { workspace = true }

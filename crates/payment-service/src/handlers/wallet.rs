@@ -1,6 +1,6 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -62,12 +62,13 @@ pub async fn add_funds(
         .map_err(|e| ApiError::Internal(e.to_string()))?;
 
     sqlx::query(
-        "INSERT INTO payment_transactions (user_id, amount, currency, provider, provider_ref, type, status) VALUES ($1, $2, 'USD', $3, $4, 'wallet_topup', 'pending')",
+        "INSERT INTO payment_transactions (user_id, amount, currency, provider, provider_ref, type, status, metadata) VALUES ($1, $2, 'USD', $3, $4, 'wallet_topup', 'pending', $5)",
     )
     .bind(auth.user_id)
     .bind(req.amount)
     .bind(&req.provider)
     .bind(&session.session_id)
+    .bind(json!({ "session_id": session.session_id }))
     .execute(&state.db)
     .await?;
 
@@ -132,5 +133,7 @@ pub async fn transfer(
 
     tx.commit().await?;
 
-    Ok(Json(json!({ "data": { "transferred": true, "amount": req.amount } })))
+    Ok(Json(
+        json!({ "data": { "transferred": true, "amount": req.amount } }),
+    ))
 }

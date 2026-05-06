@@ -1,22 +1,52 @@
-use axum::{extract::State, Json};
-use hmac::Mac;
+use axum::{
+    Json,
+    extract::{ConnectInfo, State},
+    http::HeaderMap,
+};
+use hmac::{Hmac, Mac};
 use serde::Deserialize;
-use serde_json::{json, Value};
-use sha2::Digest;
+use serde_json::{Value, json};
+use sha2::Sha256;
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
 };
+use argon2::{PasswordHash, PasswordVerifier};
+use std::net::SocketAddr;
 
 #[derive(Debug, Deserialize)]
 pub struct VerifyCodeRequest {
     pub code: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct Setup2faRequest {
+    pub password: String,
+}
+
 pub async fn setup_2fa(
     State(state): State<AppState>,
     auth: AuthUser,
+    Json(req): Json<Setup2faRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    // Require password re-verification before enabling 2FA
+    let hash: Option<String> =
+        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL")
+            .bind(auth.user_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| ApiError::NotFound("User not found".into()))?;
+
+    let hash = hash.filter(|s| !s.is_empty()).ok_or_else(|| {
+        ApiError::BadRequest("Account has no password set".into())
+    })?;
+
+    let parsed = PasswordHash::new(&hash)
+        .map_err(|_| ApiError::Unauthorized)?;
+    argon2::Argon2::default()
+        .verify_password(req.password.as_bytes(), &parsed)
+        .map_err(|_| ApiError::Unauthorized)?;
+
     // Generate TOTP secret
     let secret = generate_totp_secret();
     let issuer = "Jungle";
@@ -28,12 +58,10 @@ pub async fn setup_2fa(
         .execute(&state.db)
         .await?;
 
-    let username = sqlx::query_scalar::<_, String>(
-        "SELECT username FROM users WHERE id = $1",
-    )
-    .bind(auth.user_id)
-    .fetch_one(&state.db)
-    .await?;
+    let username = sqlx::query_scalar::<_, String>("SELECT username FROM users WHERE id = $1")
+        .bind(auth.user_id)
+        .fetch_one(&state.db)
+        .await?;
 
     let otpauth_url = format!(
         "otpauth://totp/{}:{}?secret={}&issuer={}&digits=6&period=30",
@@ -71,24 +99,22 @@ pub async fn enable_2fa(
         .map(|_| format!("{:08}", rand::random::<u32>() % 100_000_000))
         .collect();
 
-    let codes_json = serde_json::to_value(&backup_codes)
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+    let codes_json =
+        serde_json::to_value(&backup_codes).map_err(|e| ApiError::Internal(e.to_string()))?;
 
     sqlx::query("UPDATE users SET two_factor_enabled = TRUE WHERE id = $1")
         .bind(auth.user_id)
         .execute(&state.db)
         .await?;
 
-    // Store hashed backup codes
+    // Store HMAC-SHA256 hashed backup codes (keyed with JWT secret)
     for code in &backup_codes {
-        let hash = format!("{:x}", sha2::Sha256::digest(code.as_bytes()));
-        sqlx::query(
-            "INSERT INTO backup_codes (user_id, code_hash) VALUES ($1, $2)",
-        )
-        .bind(auth.user_id)
-        .bind(&hash)
-        .execute(&state.db)
-        .await?;
+        let hash = hash_backup_code(code, &state.config.jwt_secret);
+        sqlx::query("INSERT INTO backup_codes (user_id, code_hash) VALUES ($1, $2)")
+            .bind(auth.user_id)
+            .bind(&hash)
+            .execute(&state.db)
+            .await?;
     }
 
     Ok(Json(json!({
@@ -100,9 +126,19 @@ pub async fn enable_2fa(
 }
 
 pub async fn verify_2fa(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    _headers: HeaderMap,
     State(state): State<AppState>,
     Json(req): Json<Verify2faRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    // Rate limit: 5 attempts per IP per 5 minutes (brute force protection)
+    shared::rate_limit::RateLimiter::check(
+        &mut state.redis.clone(),
+        &format!("rl:2fa:{}", peer.ip()),
+        5,
+        300,
+    )
+    .await?;
     let row = sqlx::query_as::<_, (i64, Option<String>, bool)>(
         "SELECT id, two_factor_secret, two_factor_enabled FROM users WHERE id = $1",
     )
@@ -123,8 +159,8 @@ pub async fn verify_2fa(
         return Ok(Json(json!({ "data": { "verified": true } })));
     }
 
-    // Try backup code
-    let code_hash = format!("{:x}", sha2::Sha256::digest(req.code.as_bytes()));
+    // Try backup code (HMAC-SHA256 keyed with JWT secret)
+    let code_hash = hash_backup_code(&req.code, &state.config.jwt_secret);
     let deleted = sqlx::query(
         "DELETE FROM backup_codes WHERE user_id = $1 AND code_hash = $2 AND used_at IS NULL",
     )
@@ -135,7 +171,9 @@ pub async fn verify_2fa(
     .rows_affected();
 
     if deleted > 0 {
-        return Ok(Json(json!({ "data": { "verified": true, "backup_code_used": true } })));
+        return Ok(Json(
+            json!({ "data": { "verified": true, "backup_code_used": true } }),
+        ));
     }
 
     Err(ApiError::BadRequest("Invalid verification code".into()))
@@ -191,12 +229,11 @@ pub async fn regenerate_backup_codes(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
-    let enabled = sqlx::query_scalar::<_, bool>(
-        "SELECT two_factor_enabled FROM users WHERE id = $1",
-    )
-    .bind(auth.user_id)
-    .fetch_one(&state.db)
-    .await?;
+    let enabled =
+        sqlx::query_scalar::<_, bool>("SELECT two_factor_enabled FROM users WHERE id = $1")
+            .bind(auth.user_id)
+            .fetch_one(&state.db)
+            .await?;
 
     if !enabled {
         return Err(ApiError::BadRequest("2FA is not enabled".into()));
@@ -213,7 +250,7 @@ pub async fn regenerate_backup_codes(
         .collect();
 
     for code in &backup_codes {
-        let hash = format!("{:x}", sha2::Sha256::digest(code.as_bytes()));
+        let hash = hash_backup_code(code, &state.config.jwt_secret);
         sqlx::query("INSERT INTO backup_codes (user_id, code_hash) VALUES ($1, $2)")
             .bind(auth.user_id)
             .bind(&hash)
@@ -247,13 +284,15 @@ fn verify_totp(secret: &str, code: &str) -> bool {
     };
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .unwrap_or_default()
         .as_secs();
 
     // Check current period and ±1 for clock skew
     for offset in [-1i64, 0, 1] {
         let period = ((now as i64 / 30) + offset) as u64;
-        let expected = generate_totp_code(&secret_bytes, period);
+        let Some(expected) = generate_totp_code(&secret_bytes, period) else {
+            return false;
+        };
         if expected == code {
             return true;
         }
@@ -261,12 +300,12 @@ fn verify_totp(secret: &str, code: &str) -> bool {
     false
 }
 
-fn generate_totp_code(secret: &[u8], counter: u64) -> String {
+fn generate_totp_code(secret: &[u8], counter: u64) -> Option<String> {
     use hmac::Hmac;
     use sha1::Sha1;
 
     let counter_bytes = counter.to_be_bytes();
-    let mut mac = Hmac::<Sha1>::new_from_slice(secret).unwrap();
+    let mut mac = Hmac::<Sha1>::new_from_slice(secret).ok()?;
     mac.update(&counter_bytes);
     let result = mac.finalize().into_bytes();
 
@@ -276,7 +315,15 @@ fn generate_totp_code(secret: &[u8], counter: u64) -> String {
         | ((result[offset + 2] as u32) << 8)
         | (result[offset + 3] as u32);
 
-    format!("{:06}", code % 1_000_000)
+    Some(format!("{:06}", code % 1_000_000))
+}
+
+/// HMAC-SHA256 with JWT secret as key — prevents rainbow-table attacks on backup codes.
+fn hash_backup_code(code: &str, secret: &str) -> String {
+    let mut mac = Hmac::<Sha256>::new_from_slice(secret.as_bytes())
+        .expect("HMAC accepts any key size");
+    mac.update(code.as_bytes());
+    format!("{:x}", mac.finalize().into_bytes())
 }
 
 fn base32_encode(data: &[u8]) -> String {

@@ -4,7 +4,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use shared::{auth::AppState, errors::ApiError};
+use shared::{auth::{AppState, AuthUser}, errors::ApiError, permissions::Permission};
 
 #[derive(Debug, Deserialize)]
 pub struct ListQuery {
@@ -15,8 +15,10 @@ pub struct ListQuery {
 
 pub async fn list_verification_requests(
     State(state): State<AppState>,
+    auth: AuthUser,
     Query(q): Query<ListQuery>,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::VerifyUsers, &state).await?;
     let limit = q.limit.unwrap_or(20).clamp(1, 100);
     let offset = (q.page.unwrap_or(1) - 1).max(0) * limit;
     let status = q.status.unwrap_or_else(|| "pending".into());
@@ -58,9 +60,11 @@ pub struct ReviewRequest {
 
 pub async fn approve_verification(
     State(state): State<AppState>,
+    auth: AuthUser,
     Path(id): Path<i64>,
     Json(req): Json<ReviewRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::VerifyUsers, &state).await?;
     let user_id = sqlx::query_scalar::<_, i64>(
         "SELECT user_id FROM verification_requests WHERE id = $1 AND status = 'pending'",
     )
@@ -91,9 +95,11 @@ pub async fn approve_verification(
 
 pub async fn reject_verification(
     State(state): State<AppState>,
+    auth: AuthUser,
     Path(id): Path<i64>,
     Json(req): Json<ReviewRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::VerifyUsers, &state).await?;
     let result = sqlx::query(
         "UPDATE verification_requests SET status = 'rejected', admin_note = $1, reviewed_at = NOW() WHERE id = $2",
     )

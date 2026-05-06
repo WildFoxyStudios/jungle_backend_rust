@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::Serialize;
 use shared::{
@@ -35,11 +35,13 @@ pub async fn follow_user(
     }
 
     // Check user exists
-    let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL)")
-        .bind(user_id)
-        .fetch_one(&state.db)
-        .await
-        .unwrap_or(false);
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL)",
+    )
+    .bind(user_id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(false);
 
     if !exists {
         return Err(ApiError::NotFound("User not found".into()));
@@ -80,10 +82,22 @@ pub async fn follow_user(
     .await?;
 
     if status == "active" {
-        let _ = state.event_bus.publish(&DomainEvent::FollowCreated {
-            follower_id: auth.user_id,
-            following_id: user_id,
-        }).await;
+        let _ = state
+            .event_bus
+            .publish(&DomainEvent::FollowCreated {
+                follower_id: auth.user_id,
+                following_id: user_id,
+            })
+            .await;
+    } else {
+        // Pending follow request: notify the recipient so they can approve/reject.
+        let _ = state
+            .event_bus
+            .publish(&DomainEvent::FollowRequestCreated {
+                recipient_id: user_id,
+                requester_id: auth.user_id,
+            })
+            .await;
     }
 
     Ok(Json(serde_json::json!({
@@ -96,6 +110,17 @@ pub async fn unfollow_user(
     auth: AuthUser,
     Path(user_id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
+    // Capture the prior status so we know whether to fire FollowDeleted or
+    // FollowRequestRemoved (the latter is for pending follow requests).
+    let prior_status: Option<String> = sqlx::query_scalar(
+        "SELECT status FROM follows WHERE follower_id = $1 AND following_id = $2",
+    )
+    .bind(auth.user_id)
+    .bind(user_id)
+    .fetch_optional(&state.db)
+    .await
+    .unwrap_or(None);
+
     let result = sqlx::query("DELETE FROM follows WHERE follower_id = $1 AND following_id = $2")
         .bind(auth.user_id)
         .bind(user_id)
@@ -103,10 +128,26 @@ pub async fn unfollow_user(
         .await?;
 
     if result.rows_affected() > 0 {
-        let _ = state.event_bus.publish(&DomainEvent::FollowDeleted {
-            follower_id: auth.user_id,
-            following_id: user_id,
-        }).await;
+        match prior_status.as_deref() {
+            Some("pending") => {
+                let _ = state
+                    .event_bus
+                    .publish(&DomainEvent::FollowRequestRemoved {
+                        recipient_id: user_id,
+                        requester_id: auth.user_id,
+                    })
+                    .await;
+            }
+            _ => {
+                let _ = state
+                    .event_bus
+                    .publish(&DomainEvent::FollowDeleted {
+                        follower_id: auth.user_id,
+                        following_id: user_id,
+                    })
+                    .await;
+            }
+        }
     }
 
     Ok(Json(serde_json::json!({
@@ -230,10 +271,13 @@ pub async fn block_user(
     .execute(&state.db)
     .await?;
 
-    let _ = state.event_bus.publish(&DomainEvent::UserBlocked {
-        blocker_id: auth.user_id,
-        blocked_id: user_id,
-    }).await;
+    let _ = state
+        .event_bus
+        .publish(&DomainEvent::UserBlocked {
+            blocker_id: auth.user_id,
+            blocked_id: user_id,
+        })
+        .await;
 
     Ok(Json(serde_json::json!({
         "data": { "message": "User blocked" }
@@ -308,7 +352,14 @@ pub async fn list_pokes(
             "user": { "id": r.1, "username": r.2, "first_name": r.3, "last_name": r.4, "is_verified": r.5, "avatar": r.6 }
         })
     }).collect();
-    let next_cursor = if has_more { items.last().and_then(|i| i["id"].as_i64()).map(|id| id.to_string()) } else { None };
+    let next_cursor = if has_more {
+        items
+            .last()
+            .and_then(|i| i["id"].as_i64())
+            .map(|id| id.to_string())
+    } else {
+        None
+    };
 
     Ok(Json(serde_json::json!({
         "data": items,
@@ -323,13 +374,11 @@ pub async fn mute_user(
     auth: AuthUser,
     Path(user_id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    sqlx::query(
-        "INSERT INTO mutes (user_id, muted_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
-    )
-    .bind(auth.user_id)
-    .bind(user_id)
-    .execute(&state.db)
-    .await?;
+    sqlx::query("INSERT INTO mutes (user_id, muted_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+        .bind(auth.user_id)
+        .bind(user_id)
+        .execute(&state.db)
+        .await?;
 
     Ok(Json(serde_json::json!({
         "data": { "message": "User muted" }

@@ -1,9 +1,9 @@
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,

@@ -1,15 +1,15 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
     pagination::PaginationParams,
 };
-use sqlx::FromRow;
+use sqlx::{FromRow, Row};
 use time::OffsetDateTime;
 use validator::Validate;
 
@@ -106,7 +106,9 @@ pub async fn list_movies(
     let has_more = movies.len() as i64 > limit;
     let movies: Vec<_> = movies.into_iter().take(limit as usize).collect();
 
-    Ok(Json(json!({ "data": movies, "meta": { "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": movies, "meta": { "has_more": has_more } }),
+    ))
 }
 
 pub async fn create_movie(
@@ -151,11 +153,12 @@ pub async fn get_movie(
         .execute(&state.db)
         .await?;
 
-    let movie = sqlx::query_as::<_, MovieRow>("SELECT * FROM movies WHERE id = $1 AND is_approved = TRUE")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| ApiError::NotFound("Movie not found".into()))?;
+    let movie =
+        sqlx::query_as::<_, MovieRow>("SELECT * FROM movies WHERE id = $1 AND is_approved = TRUE")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| ApiError::NotFound("Movie not found".into()))?;
 
     Ok(Json(json!({ "data": movie })))
 }
@@ -238,7 +241,9 @@ pub async fn list_movie_comments(
         })
         .collect();
 
-    Ok(Json(json!({ "data": data, "meta": { "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": data, "meta": { "has_more": has_more } }),
+    ))
 }
 
 pub async fn add_movie_comment(
@@ -329,4 +334,66 @@ pub async fn watch_movie(
     }
 
     Ok(Json(json!({ "data": { "watched": true } })))
+}
+
+// ── Watch Progress & Watch Later (Phases 13-15) ──
+
+#[derive(Deserialize)]
+pub struct WatchProgressRequest {
+    pub position_ms: i64,
+    pub duration_ms: Option<i64>,
+}
+
+pub async fn update_watch_progress(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(movie_id): Path<i64>,
+    Json(body): Json<WatchProgressRequest>,
+) -> Result<Json<()>, ApiError> {
+    sqlx::query(
+        "INSERT INTO watch_progress (user_id, movie_id, position_ms, duration_ms, updated_at)
+         VALUES ($1, $2, $3, $4, NOW())
+         ON CONFLICT (user_id, movie_id) DO UPDATE
+         SET position_ms = $3, duration_ms = $4, updated_at = NOW()"
+    )
+    .bind(auth.user_id).bind(movie_id).bind(body.position_ms).bind(body.duration_ms)
+    .execute(&state.db).await
+    .map_err(|e| { tracing::error!(error = %e); ApiError::Internal("DB error".into()) })?;
+    Ok(Json(()))
+}
+
+pub async fn get_watch_progress(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<Vec<Value>>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT wp.movie_id, wp.position_ms, wp.duration_ms, wp.updated_at, m.title
+         FROM watch_progress wp JOIN movies m ON m.id = wp.movie_id
+         WHERE wp.user_id = $1 ORDER BY wp.updated_at DESC LIMIT 20"
+    )
+    .bind(auth.user_id)
+    .fetch_all(&state.db).await
+    .map_err(|e| { tracing::error!(error = %e); ApiError::Internal("DB error".into()) })?;
+
+    let items: Vec<Value> = rows.iter().map(|r| {
+        json!({
+            "movie_id": r.get::<i64, _>("movie_id"),
+            "position_ms": r.get::<i64, _>("position_ms"),
+            "duration_ms": r.get::<Option<i64>, _>("duration_ms"),
+            "title": r.get::<String, _>("title"),
+        })
+    }).collect();
+    Ok(Json(items))
+}
+
+pub async fn add_to_watch_later(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(movie_id): Path<i64>,
+) -> Result<Json<()>, ApiError> {
+    sqlx::query("INSERT INTO watch_later (user_id, movie_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+        .bind(auth.user_id).bind(movie_id)
+        .execute(&state.db).await
+        .map_err(|e| { tracing::error!(error = %e); ApiError::Internal("DB error".into()) })?;
+    Ok(Json(()))
 }

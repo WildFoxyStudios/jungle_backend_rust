@@ -1,15 +1,16 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
+    events::DomainEvent,
     pagination::PaginationParams,
 };
-use sqlx::FromRow;
+use sqlx::{FromRow, Row};
 use time::OffsetDateTime;
 use validator::Validate;
 
@@ -111,7 +112,9 @@ pub async fn list_jobs(
     let jobs: Vec<_> = jobs.into_iter().take(limit as usize).collect();
     let next_cursor = jobs.last().map(|j| j.id.to_string());
 
-    Ok(Json(json!({ "data": jobs, "meta": { "cursor": next_cursor, "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": jobs, "meta": { "cursor": next_cursor, "has_more": has_more } }),
+    ))
 }
 
 pub async fn create_job(
@@ -148,17 +151,103 @@ pub async fn create_job(
     Ok(Json(json!({ "data": job })))
 }
 
+#[derive(Debug, FromRow)]
+struct JobPosterRow {
+    id: i64,
+    uuid: uuid::Uuid,
+    username: String,
+    first_name: String,
+    last_name: String,
+    avatar: String,
+    is_verified: bool,
+    is_pro: i16,
+}
+
 pub async fn get_job(
     State(state): State<AppState>,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    let job = sqlx::query_as::<_, JobRow>("SELECT * FROM jobs WHERE id = $1")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| ApiError::NotFound("Job not found".into()))?;
+    let job = sqlx::query_as::<_, JobRow>(
+        r#"SELECT id, uuid, user_id, page_id, title, description,
+                  COALESCE(location, '') AS location,
+                  lat, lng, salary_min, salary_max,
+                  COALESCE(salary_period, 'monthly') AS salary_period,
+                  COALESCE(job_type, 'full_time') AS job_type,
+                  category_id,
+                  COALESCE(image, '') AS image,
+                  COALESCE(currency, 'USD') AS currency,
+                  COALESCE(questions, '[]'::jsonb) AS questions,
+                  COALESCE(status, 'active') AS status,
+                  created_at
+           FROM jobs WHERE id = $1"#,
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("Job not found".into()))?;
 
-    Ok(Json(json!({ "data": job })))
+    let poster = sqlx::query_as::<_, JobPosterRow>(
+        r#"
+        SELECT u.id, u.uuid, u.username, u.first_name, u.last_name, u.avatar,
+               COALESCE(u.is_verified, FALSE) AS is_verified,
+               COALESCE(u.is_pro, 0::smallint) AS is_pro
+        FROM users u
+        WHERE u.id = $1 AND u.deleted_at IS NULL
+        "#,
+    )
+    .bind(job.user_id)
+    .fetch_optional(&state.db)
+    .await?;
+
+    let category: Option<String> = match job.category_id {
+        Some(cid) => sqlx::query_scalar::<_, String>(
+            "SELECT name_key FROM categories WHERE id = $1 AND active = TRUE",
+        )
+        .bind(cid)
+        .fetch_optional(&state.db)
+        .await?,
+        None => None,
+    };
+
+    let application_count: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*)::bigint FROM job_applications WHERE job_id = $1",
+    )
+    .bind(id)
+    .fetch_one(&state.db)
+    .await
+    .unwrap_or(0);
+
+    let mut job_val = serde_json::to_value(&job).unwrap_or(json!({}));
+    if let Some(obj) = job_val.as_object_mut() {
+        obj.insert(
+            "category".to_string(),
+            json!(category.unwrap_or_default()),
+        );
+        obj.insert(
+            "poster".to_string(),
+            match poster {
+                Some(p) => json!({
+                    "id": p.id,
+                    "uuid": p.uuid,
+                    "username": p.username,
+                    "first_name": p.first_name,
+                    "last_name": p.last_name,
+                    "avatar": p.avatar,
+                    "is_verified": p.is_verified,
+                    "is_pro": p.is_pro,
+                    "is_online": false,
+                }),
+                None => Value::Null,
+            },
+        );
+        obj.insert("application_count".to_string(), json!(application_count));
+        obj.insert(
+            "is_active".to_string(),
+            json!(job.status == "active"),
+        );
+    }
+
+    Ok(Json(json!({ "data": job_val })))
 }
 
 pub async fn update_job(
@@ -218,7 +307,10 @@ pub async fn delete_job(
         return Err(ApiError::Forbidden("".into()));
     }
 
-    sqlx::query("DELETE FROM jobs WHERE id = $1").bind(id).execute(&state.db).await?;
+    sqlx::query("DELETE FROM jobs WHERE id = $1")
+        .bind(id)
+        .execute(&state.db)
+        .await?;
     Ok(Json(json!({ "data": { "deleted": true } })))
 }
 
@@ -243,17 +335,19 @@ pub async fn apply_job(
     Json(req): Json<ApplyRequest>,
 ) -> Result<Json<Value>, ApiError> {
     // Can't apply to own job
-    let owner = sqlx::query_scalar::<_, i64>("SELECT user_id FROM jobs WHERE id = $1 AND status = 'active'")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| ApiError::NotFound("Job not found or inactive".into()))?;
+    let owner = sqlx::query_scalar::<_, i64>(
+        "SELECT user_id FROM jobs WHERE id = $1 AND status = 'active'",
+    )
+    .bind(id)
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or_else(|| ApiError::NotFound("Job not found or inactive".into()))?;
 
     if owner == auth.user_id {
         return Err(ApiError::BadRequest("Cannot apply to your own job".into()));
     }
 
-    sqlx::query(
+    let result = sqlx::query(
         r#"
         INSERT INTO job_applications (job_id, user_id, answers, cover_letter, resume_url)
         VALUES ($1, $2, $3, $4, $5)
@@ -267,6 +361,14 @@ pub async fn apply_job(
     .bind(req.resume_url.as_deref().unwrap_or(""))
     .execute(&state.db)
     .await?;
+
+    if result.rows_affected() > 0 {
+        let _ = state.event_bus.publish(&DomainEvent::JobApplicationSubmitted {
+            job_id: id,
+            applicant_id: auth.user_id,
+            employer_id: owner,
+        }).await;
+    }
 
     Ok(Json(json!({ "data": { "applied": true } })))
 }
@@ -311,15 +413,21 @@ pub async fn update_application_status(
 ) -> Result<Json<Value>, ApiError> {
     let valid = ["pending", "reviewing", "accepted", "rejected"];
     if !valid.contains(&req.status.as_str()) {
-        return Err(ApiError::BadRequest(format!("Invalid status. Use: {}", valid.join(", "))));
+        return Err(ApiError::BadRequest(format!(
+            "Invalid status. Use: {}",
+            valid.join(", ")
+        )));
     }
 
     // Verify caller owns the job
-    let job_id = sqlx::query_scalar::<_, i64>("SELECT job_id FROM job_applications WHERE id = $1")
+    let app_row = sqlx::query("SELECT job_id, user_id FROM job_applications WHERE id = $1")
         .bind(id)
         .fetch_optional(&state.db)
         .await?
         .ok_or_else(|| ApiError::NotFound("Application not found".into()))?;
+
+    let job_id: i64 = app_row.get("job_id");
+    let applicant_id: i64 = app_row.get("user_id");
 
     let owner = sqlx::query_scalar::<_, i64>("SELECT user_id FROM jobs WHERE id = $1")
         .bind(job_id)
@@ -335,6 +443,13 @@ pub async fn update_application_status(
         .bind(id)
         .execute(&state.db)
         .await?;
+
+    let _ = state.event_bus.publish(&DomainEvent::ApplicationStatusChanged {
+        application_id: id,
+        job_id,
+        applicant_id,
+        new_status: req.status.clone(),
+    }).await;
 
     Ok(Json(json!({ "data": { "status": req.status } })))
 }
@@ -391,7 +506,13 @@ pub async fn search_jobs(
     .bind(q)
     .bind(&ilike)
     .bind(params.location.as_deref())
-    .bind(params.location.as_ref().map(|l| format!("%{l}%")).unwrap_or_default())
+    .bind(
+        params
+            .location
+            .as_ref()
+            .map(|l| format!("%{l}%"))
+            .unwrap_or_default(),
+    )
     .bind(params.job_type.as_deref())
     .bind(params.category_id)
     .bind(limit + 1)
@@ -402,20 +523,25 @@ pub async fn search_jobs(
     let data: Vec<_> = jobs.into_iter().take(limit as usize).collect();
     let next_cursor = data.last().map(|j| j.id.to_string());
 
-    Ok(Json(json!({ "data": data, "meta": { "cursor": next_cursor, "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": data, "meta": { "cursor": next_cursor, "has_more": has_more } }),
+    ))
 }
 
 /// GET /v1/jobs/categories
-pub async fn job_categories(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, ApiError> {
+pub async fn job_categories(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let cats = sqlx::query_as::<_, (i64, String)>(
-        "SELECT id, name FROM categories WHERE type = 'job' ORDER BY name",
+        r#"SELECT id, name_key AS "name!" FROM categories
+           WHERE type = 'job' AND active = TRUE
+           ORDER BY sort_order, name_key"#,
     )
     .fetch_all(&state.db)
     .await?;
 
-    let data: Vec<Value> = cats.into_iter().map(|(id, name)| json!({"id": id, "name": name})).collect();
+    let data: Vec<Value> = cats
+        .into_iter()
+        .map(|(id, name)| json!({"id": id, "name": name}))
+        .collect();
     Ok(Json(json!({ "data": data })))
 }
 
@@ -492,24 +618,160 @@ pub async fn nearby_jobs(
 
     let data: Vec<Value> = rows
         .into_iter()
-        .map(|(id, uid, title, desc, loc, lat, lng, jtype, dist, created)| {
-            json!({
-                "id": id,
-                "user_id": uid,
-                "title": title,
-                "description": desc,
-                "location": loc,
-                "lat": lat,
-                "lng": lng,
-                "job_type": jtype,
-                "distance_km": dist,
-                "created_at": created.to_string(),
-            })
-        })
+        .map(
+            |(id, uid, title, desc, loc, lat, lng, jtype, dist, created)| {
+                json!({
+                    "id": id,
+                    "user_id": uid,
+                    "title": title,
+                    "description": desc,
+                    "location": loc,
+                    "lat": lat,
+                    "lng": lng,
+                    "job_type": jtype,
+                    "distance_km": dist,
+                    "created_at": created.to_string(),
+                })
+            },
+        )
         .collect();
 
     Ok(Json(json!({
         "data": data,
         "meta": { "has_more": has_more, "next_cursor": next_cursor }
     })))
+}
+
+// ── Saved Jobs ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct SaveJobRequest { pub job_id: i64 }
+
+pub async fn save_job(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(body): Json<SaveJobRequest>,
+) -> Result<Json<()>, ApiError> {
+    sqlx::query("INSERT INTO saved_jobs (user_id, job_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
+        .bind(auth.user_id).bind(body.job_id)
+        .execute(&state.db).await
+        .map_err(|e| { tracing::error!(error = %e); ApiError::Internal("DB error".into()) })?;
+    Ok(Json(()))
+}
+
+pub async fn list_saved_jobs(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT j.* FROM jobs j JOIN saved_jobs sj ON sj.job_id = j.id WHERE sj.user_id = $1 ORDER BY sj.saved_at DESC LIMIT 50"
+    )
+    .bind(auth.user_id).fetch_all(&state.db).await
+    .map_err(|e| { tracing::error!(error = %e); ApiError::Internal("DB error".into()) })?;
+
+    let items: Vec<serde_json::Value> = rows.iter().map(|r| serde_json::json!({
+        "id": r.get::<i64, _>("id"),
+        "title": r.get::<String, _>("title"),
+        "location": r.get::<Option<String>, _>("location"),
+        "created_at": r.get::<String, _>("created_at"),
+    })).collect();
+    Ok(Json(items))
+}
+
+// ── Job Alerts ─────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct CreateJobAlertRequest {
+    pub query: Option<String>,
+    pub frequency: Option<String>,
+}
+
+pub async fn create_job_alert(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(body): Json<CreateJobAlertRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let row = sqlx::query(
+        "INSERT INTO job_alerts (user_id, query, frequency) VALUES ($1, $2, $3) RETURNING id"
+    )
+    .bind(auth.user_id).bind(&body.query).bind(body.frequency.as_deref().unwrap_or("weekly"))
+    .fetch_one(&state.db).await
+    .map_err(|e| { tracing::error!(error = %e); ApiError::Internal("DB error".into()) })?;
+
+    Ok(Json(serde_json::json!({ "id": row.get::<i64, _>("id") })))
+}
+
+pub async fn list_job_alerts(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT id, query, frequency, is_active, created_at FROM job_alerts WHERE user_id = $1 ORDER BY created_at DESC"
+    )
+    .bind(auth.user_id).fetch_all(&state.db).await
+    .map_err(|e| { tracing::error!(error = %e); ApiError::Internal("DB error".into()) })?;
+
+    let items: Vec<serde_json::Value> = rows.iter().map(|r| serde_json::json!({
+        "id": r.get::<i64, _>("id"),
+        "query": r.get::<Option<String>, _>("query"),
+        "frequency": r.get::<String, _>("frequency"),
+        "is_active": r.get::<bool, _>("is_active"),
+        "created_at": r.get::<String, _>("created_at"),
+    })).collect();
+    Ok(Json(items))
+}
+
+// ── Resume Upload ──────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct UploadResumeRequest {
+    pub file_url: String,
+    pub file_name: Option<String>,
+}
+
+pub async fn upload_resume(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Json(body): Json<UploadResumeRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // Deactivate previous resumes
+    sqlx::query("UPDATE user_resumes SET is_active = FALSE WHERE user_id = $1")
+        .bind(auth.user_id).execute(&state.db).await
+        .map_err(|e| { tracing::error!(error = %e, "Failed to deactivate previous resumes"); ApiError::Internal("DB error".into()) })?;
+
+    let row = sqlx::query(
+        "INSERT INTO user_resumes (user_id, file_url, file_name, is_active, uploaded_at)
+         VALUES ($1, $2, $3, TRUE, NOW()) RETURNING id"
+    )
+    .bind(auth.user_id).bind(&body.file_url).bind(&body.file_name)
+    .fetch_one(&state.db).await
+    .map_err(|e| { tracing::error!(error = %e); ApiError::Internal("DB error".into()) })?;
+
+    Ok(Json(serde_json::json!({ "id": row.get::<i64, _>("id") })))
+}
+
+pub async fn get_my_resume(
+    State(state): State<AppState>,
+    auth: AuthUser,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let row = sqlx::query(
+        "SELECT id, file_url, file_name, extracted_text, skills, experience_years, uploaded_at
+         FROM user_resumes WHERE user_id = $1 AND is_active = TRUE ORDER BY uploaded_at DESC LIMIT 1"
+    )
+    .bind(auth.user_id).fetch_optional(&state.db).await
+    .map_err(|e| { tracing::error!(error = %e); ApiError::Internal("DB error".into()) })?;
+
+    if let Some(r) = row {
+        Ok(Json(serde_json::json!({
+            "id": r.get::<i64, _>("id"),
+            "file_url": r.get::<String, _>("file_url"),
+            "file_name": r.get::<Option<String>, _>("file_name"),
+            "extracted_text": r.get::<Option<String>, _>("extracted_text"),
+            "skills": r.get::<Option<serde_json::Value>, _>("skills"),
+            "experience_years": r.get::<Option<i32>, _>("experience_years"),
+            "uploaded_at": r.get::<String, _>("uploaded_at"),
+        })))
+    } else {
+        Ok(Json(serde_json::json!(null)))
+    }
 }

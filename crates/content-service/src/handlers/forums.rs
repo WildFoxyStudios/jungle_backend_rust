@@ -1,9 +1,9 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -72,9 +72,7 @@ pub struct CreateReplyRequest {
     pub quoted_reply_id: Option<i64>,
 }
 
-pub async fn list_sections(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, ApiError> {
+pub async fn list_sections(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let sections = sqlx::query_as::<_, SectionRow>(
         "SELECT id, name, description FROM forum_sections ORDER BY id",
     )
@@ -128,7 +126,9 @@ pub async fn list_threads(
     let has_more = threads.len() as i64 > limit;
     let threads: Vec<_> = threads.into_iter().take(limit as usize).collect();
 
-    Ok(Json(json!({ "data": threads, "meta": { "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": threads, "meta": { "has_more": has_more } }),
+    ))
 }
 
 pub async fn create_thread(
@@ -151,10 +151,12 @@ pub async fn create_thread(
     .fetch_one(&mut *tx)
     .await?;
 
-    sqlx::query("UPDATE forums SET thread_count = thread_count + 1, last_post_at = NOW() WHERE id = $1")
-        .bind(forum_id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(
+        "UPDATE forums SET thread_count = thread_count + 1, last_post_at = NOW() WHERE id = $1",
+    )
+    .bind(forum_id)
+    .execute(&mut *tx)
+    .await?;
 
     tx.commit().await?;
 
@@ -311,7 +313,9 @@ pub async fn list_replies(
     let has_more = replies.len() as i64 > limit;
     let replies: Vec<_> = replies.into_iter().take(limit as usize).collect();
 
-    Ok(Json(json!({ "data": replies, "meta": { "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": replies, "meta": { "has_more": has_more } }),
+    ))
 }
 
 pub async fn create_reply(
@@ -404,7 +408,9 @@ pub async fn share_thread(
     .fetch_one(&state.db)
     .await?;
 
-    Ok(Json(json!({ "data": { "post_id": post_id, "shared": true } })))
+    Ok(Json(
+        json!({ "data": { "post_id": post_id, "shared": true } }),
+    ))
 }
 
 pub async fn vote_thread(
@@ -456,20 +462,23 @@ pub async fn delete_reply(
         return Err(ApiError::Forbidden("".into()));
     }
 
-    let thread_id = sqlx::query_scalar::<_, i64>("SELECT thread_id FROM forum_replies WHERE id = $1")
-        .bind(id)
-        .fetch_one(&state.db)
-        .await?;
+    let thread_id =
+        sqlx::query_scalar::<_, i64>("SELECT thread_id FROM forum_replies WHERE id = $1")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await?;
 
     sqlx::query("DELETE FROM forum_replies WHERE id = $1")
         .bind(id)
         .execute(&state.db)
         .await?;
 
-    sqlx::query("UPDATE forum_threads SET reply_count = GREATEST(reply_count - 1, 0) WHERE id = $1")
-        .bind(thread_id)
-        .execute(&state.db)
-        .await?;
+    sqlx::query(
+        "UPDATE forum_threads SET reply_count = GREATEST(reply_count - 1, 0) WHERE id = $1",
+    )
+    .bind(thread_id)
+    .execute(&state.db)
+    .await?;
 
     Ok(Json(json!({ "data": { "deleted": true } })))
 }
@@ -524,7 +533,9 @@ pub async fn search_threads(
     let has_more = threads.len() as i64 > limit;
     let threads: Vec<_> = threads.into_iter().take(limit as usize).collect();
 
-    Ok(Json(json!({ "data": threads, "meta": { "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": threads, "meta": { "has_more": has_more } }),
+    ))
 }
 
 #[derive(Debug, Serialize, FromRow)]
@@ -540,9 +551,7 @@ struct TopPosterRow {
 }
 
 /// GET /v1/forums/members — Top posters leaderboard (ranked by thread_count + reply_count).
-pub async fn list_top_posters(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, ApiError> {
+pub async fn list_top_posters(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let rows = sqlx::query_as::<_, TopPosterRow>(
         r#"
         WITH thread_counts AS (
@@ -567,18 +576,20 @@ pub async fn list_top_posters(
 
     let data: Vec<Value> = rows
         .into_iter()
-        .map(|r| json!({
-            "user": {
-                "id": r.user_id,
-                "username": r.username,
-                "first_name": r.first_name,
-                "last_name": r.last_name,
-                "avatar": r.avatar,
-                "is_verified": r.is_verified,
-            },
-            "thread_count": r.thread_count,
-            "reply_count": r.reply_count,
-        }))
+        .map(|r| {
+            json!({
+                "user": {
+                    "id": r.user_id,
+                    "username": r.username,
+                    "first_name": r.first_name,
+                    "last_name": r.last_name,
+                    "avatar": r.avatar,
+                    "is_verified": r.is_verified,
+                },
+                "thread_count": r.thread_count,
+                "reply_count": r.reply_count,
+            })
+        })
         .collect();
 
     Ok(Json(json!({ "data": data })))
@@ -612,7 +623,9 @@ pub async fn my_threads(
     let has_more = threads.len() as i64 > limit;
     let threads: Vec<_> = threads.into_iter().take(limit as usize).collect();
 
-    Ok(Json(json!({ "data": threads, "meta": { "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": threads, "meta": { "has_more": has_more } }),
+    ))
 }
 
 /// GET /v1/forums/my/replies — Current user's forum replies.
@@ -643,5 +656,7 @@ pub async fn my_replies(
     let has_more = replies.len() as i64 > limit;
     let replies: Vec<_> = replies.into_iter().take(limit as usize).collect();
 
-    Ok(Json(json!({ "data": replies, "meta": { "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": replies, "meta": { "has_more": has_more } }),
+    ))
 }

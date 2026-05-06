@@ -4,10 +4,11 @@
 use sqlx::PgPool;
 use std::time::Duration;
 
+use crate::cron;
+
 pub async fn run(pool: PgPool) {
     let interval = Duration::from_secs(6 * 3600);
     loop {
-        // Read retention window from site_config
         let days: Option<i32> = sqlx::query_scalar(
             r#"SELECT CAST(value AS INTEGER)
                  FROM site_config
@@ -20,22 +21,31 @@ pub async fn run(pool: PgPool) {
 
         let days = days.unwrap_or(0);
         if days <= 0 {
+            cron::skipped(&pool, "auto_delete_old_messages", "retention disabled").await;
             tokio::time::sleep(interval).await;
             continue;
         }
 
-        let sql = format!(
-            "DELETE FROM messages WHERE created_at < NOW() - INTERVAL '{} days' AND deleted_at IS NULL",
-            days
-        );
-
-        match sqlx::query(&sql).execute(&pool).await {
-            Ok(r) if r.rows_affected() > 0 => {
-                tracing::info!(count = r.rows_affected(), days, "auto_delete_old_messages: deleted");
+        cron::tracked(&pool, "auto_delete_old_messages", || async {
+            // Plain placeholder cannot bind into INTERVAL literal directly.
+            let sql = format!(
+                "DELETE FROM messages WHERE created_at < NOW() - INTERVAL '{} days' AND deleted_at IS NULL",
+                days
+            );
+            let r = sqlx::query(&sql)
+                .execute(&pool)
+                .await
+                .map_err(|e| e.to_string())?;
+            if r.rows_affected() > 0 {
+                tracing::info!(
+                    count = r.rows_affected(),
+                    days,
+                    "auto_delete_old_messages: deleted"
+                );
             }
-            Ok(_) => {}
-            Err(e) => tracing::error!(error = %e, "auto_delete_old_messages failed"),
-        }
+            Ok(format!("deleted {} (>{}d)", r.rows_affected(), days))
+        })
+        .await;
 
         tokio::time::sleep(interval).await;
     }

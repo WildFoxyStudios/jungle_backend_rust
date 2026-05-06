@@ -4,6 +4,8 @@ use sqlx::PgPool;
 use std::time::Duration;
 use time::OffsetDateTime;
 
+use crate::cron;
+
 pub async fn run(pool: PgPool) {
     // Ensure target table exists (idempotent).
     let _ = sqlx::query(
@@ -24,12 +26,12 @@ pub async fn run(pool: PgPool) {
     let check_every = Duration::from_secs(15 * 60);
     loop {
         let now = OffsetDateTime::now_utc();
-        // Run once at minute 10 past midnight
         if now.hour() == 0 && now.minute() >= 10 && now.minute() < 25 {
-            if let Err(e) = snapshot(&pool).await {
-                tracing::error!(error = %e, "analytics_snapshot_daily failed");
-            }
-            // Sleep the rest of the hour to avoid double-running
+            cron::tracked(&pool, "analytics_snapshot_daily", || async {
+                snapshot(&pool).await.map_err(|e| e.to_string())?;
+                Ok("snapshot inserted".into())
+            })
+            .await;
             tokio::time::sleep(Duration::from_secs(3600)).await;
             continue;
         }
@@ -38,7 +40,7 @@ pub async fn run(pool: PgPool) {
 }
 
 async fn snapshot(pool: &PgPool) -> Result<(), sqlx::Error> {
-    let _ = sqlx::query(
+    sqlx::query(
         r#"
         INSERT INTO daily_analytics
             (date, new_users, active_users, posts_created, messages_sent, calls_started, revenue_cents)

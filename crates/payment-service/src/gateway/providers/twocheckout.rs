@@ -3,8 +3,8 @@ use rust_decimal::Decimal;
 use std::collections::HashMap;
 
 use crate::gateway::{
-    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus,
-    PaymentStatusKind, RefundResult, WebhookEvent,
+    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
+    RefundResult, WebhookEvent,
 };
 
 pub struct TwoCheckoutGateway {
@@ -67,11 +67,14 @@ impl PaymentGateway for TwoCheckoutGateway {
                 "https://api.2checkout.com/rest/6.0/orders/{}/",
                 reference
             ))
-            .header("X-Avangate-Authentication", format!(
-                "code=\"{}\" date=\"{}\" hash=\"\"",
-                self.merchant_code,
-                chrono_now_iso()
-            ))
+            .header(
+                "X-Avangate-Authentication",
+                format!(
+                    "code=\"{}\" date=\"{}\" hash=\"\"",
+                    self.merchant_code,
+                    chrono_now_iso()
+                ),
+            )
             .basic_auth(&self.merchant_code, Some(&self.secret_key))
             .send()
             .await?;
@@ -89,14 +92,16 @@ impl PaymentGateway for TwoCheckoutGateway {
         Ok(PaymentStatus {
             provider_ref: result["RefNo"].as_str().unwrap_or("").to_string(),
             status,
-            amount: result["GrossPrice"]
-                .as_str()
-                .and_then(|s| s.parse().ok()),
+            amount: result["GrossPrice"].as_str().and_then(|s| s.parse().ok()),
             currency: result["Currency"].as_str().map(|s| s.to_string()),
         })
     }
 
-    async fn handle_webhook(&self, payload: &[u8], signature: &str) -> Result<WebhookEvent, PaymentError> {
+    async fn handle_webhook(
+        &self,
+        payload: &[u8],
+        signature: &str,
+    ) -> Result<WebhookEvent, PaymentError> {
         // 2Checkout IPN uses MD5(secret + IPN_PID + IPN_PNAME + IPN_DATE + DATE) signature
         if !signature.is_empty() && !self.secret_key.is_empty() {
             let to_hash = format!("{}{}", self.secret_key, String::from_utf8_lossy(payload));
@@ -106,8 +111,8 @@ impl PaymentGateway for TwoCheckoutGateway {
             }
         }
 
-        let body: serde_json::Value =
-            serde_json::from_slice(payload).map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+        let body: serde_json::Value = serde_json::from_slice(payload)
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         let status = match body["ORDERSTATUS"].as_str() {
             Some("COMPLETE") => PaymentStatusKind::Completed,
@@ -117,7 +122,10 @@ impl PaymentGateway for TwoCheckoutGateway {
         };
 
         Ok(WebhookEvent {
-            event_type: body["ORDERSTATUS"].as_str().unwrap_or("unknown").to_string(),
+            event_type: body["ORDERSTATUS"]
+                .as_str()
+                .unwrap_or("unknown")
+                .to_string(),
             provider_ref: body["REFNO"].as_str().unwrap_or("").to_string(),
             status,
             amount: body["IPN_TOTALGENERAL"]
@@ -128,7 +136,11 @@ impl PaymentGateway for TwoCheckoutGateway {
         })
     }
 
-    async fn refund(&self, reference: &str, amount: Option<Decimal>) -> Result<RefundResult, PaymentError> {
+    async fn refund(
+        &self,
+        reference: &str,
+        amount: Option<Decimal>,
+    ) -> Result<RefundResult, PaymentError> {
         let body = serde_json::json!({
             "amount": amount.unwrap_or(Decimal::ZERO).to_string(),
             "comment": "Refund request",
@@ -150,7 +162,10 @@ impl PaymentGateway for TwoCheckoutGateway {
 
         if result.get("error_code").is_some() {
             return Err(PaymentError::RefundFailed(
-                result["message"].as_str().unwrap_or("Refund failed").to_string(),
+                result["message"]
+                    .as_str()
+                    .unwrap_or("Refund failed")
+                    .to_string(),
             ));
         }
 

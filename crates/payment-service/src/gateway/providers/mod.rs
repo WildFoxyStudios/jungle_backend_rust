@@ -11,7 +11,7 @@ pub mod iyzipay;
 pub mod ngenius;
 pub mod payfast;
 pub mod paypal;
-pub mod paypro;
+pub mod paypro_api;
 pub mod paysera;
 pub mod paystack;
 pub mod razorpay;

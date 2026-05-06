@@ -1,6 +1,6 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{auth::AppState, errors::ApiError};
 
 #[derive(Debug, Deserialize)]
@@ -38,10 +38,58 @@ pub async fn verify_email(
     .rows_affected();
 
     if updated == 0 {
-        return Err(ApiError::BadRequest("Invalid or expired verification code".into()));
+        return Err(ApiError::BadRequest(
+            "Invalid or expired verification code".into(),
+        ));
     }
 
     Ok(Json(json!({ "data": { "verified": true } })))
+}
+
+/// POST /v1/auth/verify-email-by-code — Activate account via one-shot
+/// code from an email link (matches PHP `/activation/<code>`).
+///
+/// Unlike `verify_email`, this variant does **not** require the caller to
+/// know which email the code was issued for: we look up the row by the
+/// unique, time-limited `email_code` column directly. This is what the
+/// `/activate/[code]` page in the frontend uses.
+#[derive(Debug, Deserialize)]
+pub struct VerifyByCodeRequest {
+    pub code: String,
+}
+
+pub async fn verify_email_by_code(
+    State(state): State<AppState>,
+    Json(req): Json<VerifyByCodeRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if req.code.trim().is_empty() {
+        return Err(ApiError::BadRequest("Code is required".into()));
+    }
+
+    let updated = sqlx::query(
+        r#"UPDATE users
+              SET email_verified = TRUE, email_code = NULL
+            WHERE email_code = $1
+              AND email_verified = FALSE
+              AND deleted_at IS NULL"#,
+    )
+    .bind(req.code.trim())
+    .execute(&state.db)
+    .await?
+    .rows_affected();
+
+    if updated == 0 {
+        return Err(ApiError::BadRequest(
+            "Invalid or expired activation link".into(),
+        ));
+    }
+
+    Ok(Json(json!({
+        "data": {
+            "verified": true,
+            "message": "Your account has been activated."
+        }
+    })))
 }
 
 pub async fn verify_phone(
@@ -121,5 +169,7 @@ pub async fn resend_verification(
         }
     }
 
-    Ok(Json(json!({ "data": { "message": "Verification code sent" } })))
+    Ok(Json(
+        json!({ "data": { "message": "Verification code sent" } }),
+    ))
 }

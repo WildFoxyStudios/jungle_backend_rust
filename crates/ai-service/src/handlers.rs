@@ -8,18 +8,24 @@
 //! - `/v1/admin/ai/providers/{id}/test`
 
 use axum::{
-    extract::{FromRef, State},
     Json,
+    extract::{FromRef, State},
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::auth::{AppState, AuthUser};
 use shared::errors::ApiError;
+use shared::permissions::Permission;
 use sqlx::PgPool;
 use std::sync::Arc;
 
+use crate::providers::cloudflare_ai;
+use crate::providers::ocrspace;
+use crate::providers::openai;
+
 use crate::credits::{self, CreditKind};
-use crate::providers::{factory, GenOpts, ImgOpts, ProviderRegistry};
+use crate::providers::{GenOpts, ImgOpts, ProviderRegistry, factory};
+use shared::moderation;
 
 #[derive(Clone)]
 pub struct AiState {
@@ -59,7 +65,12 @@ pub async fn generate_post(
     Json(req): Json<GeneratePostRequest>,
 ) -> Result<Json<Value>, ApiError> {
     let words_to_estimate = req.max_tokens.unwrap_or(300) as i32;
-    credits::deduct(state.db(), auth.user_id, CreditKind::Words(words_to_estimate)).await?;
+    credits::deduct(
+        state.db(),
+        auth.user_id,
+        CreditKind::Words(words_to_estimate),
+    )
+    .await?;
 
     let system = format!(
         "You are a social media post writer. Write a concise, engaging post in {} tone. \
@@ -70,7 +81,10 @@ pub async fn generate_post(
         "Write an interesting, engaging social media post about something trending.".into()
     });
 
-    let chain = state.registry.chain_for(crate::providers::Capability::Text).await;
+    let chain = state
+        .registry
+        .chain_for(crate::providers::Capability::Text)
+        .await;
     let opts = GenOpts {
         max_tokens: Some(req.max_tokens.unwrap_or(300)),
         temperature: Some(0.9),
@@ -164,7 +178,10 @@ pub async fn generate_blog(
         keywords_hint,
     );
 
-    let chain = state.registry.chain_for(crate::providers::Capability::Text).await;
+    let chain = state
+        .registry
+        .chain_for(crate::providers::Capability::Text)
+        .await;
     let opts = GenOpts {
         max_tokens: Some(max_tokens),
         temperature: Some(0.7),
@@ -220,7 +237,10 @@ pub async fn generate_blog(
                 },
             )
             .await;
-            Err(ApiError::Internal(format!("AI blog generation failed: {}", e)))
+            Err(ApiError::Internal(format!(
+                "AI blog generation failed: {}",
+                e
+            )))
         }
     }
 }
@@ -246,7 +266,10 @@ pub async fn generate_images(
     let n = req.n.unwrap_or(1).clamp(1, 4) as i32;
     credits::deduct(state.db(), auth.user_id, CreditKind::Images(n)).await?;
 
-    let chain = state.registry.chain_for(crate::providers::Capability::Image).await;
+    let chain = state
+        .registry
+        .chain_for(crate::providers::Capability::Image)
+        .await;
     let opts = ImgOpts {
         n: n as u32,
         size: req.size.clone(),
@@ -293,7 +316,10 @@ pub async fn generate_images(
                 },
             )
             .await;
-            Err(ApiError::Internal(format!("AI image generation failed: {}", e)))
+            Err(ApiError::Internal(format!(
+                "AI image generation failed: {}",
+                e
+            )))
         }
     }
 }
@@ -352,7 +378,10 @@ pub async fn chat_completion(
     let est = req.max_tokens.unwrap_or(1024) as i32;
     credits::deduct(state.db(), auth.user_id, CreditKind::Words(est)).await?;
 
-    let chain = state.registry.chain_for(crate::providers::Capability::Text).await;
+    let chain = state
+        .registry
+        .chain_for(crate::providers::Capability::Text)
+        .await;
     let opts = GenOpts {
         max_tokens: req.max_tokens,
         temperature: req.temperature,
@@ -375,7 +404,9 @@ pub async fn chat_completion(
                 },
             )
             .await;
-            Ok(Json(json!({"data": {"reply": res.content, "provider": res.provider}})))
+            Ok(Json(
+                json!({"data": {"reply": res.content, "provider": res.provider}}),
+            ))
         }
         Err(e) => Err(ApiError::Internal(format!("AI chat failed: {}", e))),
     }
@@ -405,6 +436,142 @@ pub async fn suggest_post(
     .await
 }
 
+// ═══════════════════════════════════════════════════════════════════
+// Chat Suggestions (smart reply chips)
+// ═══════════════════════════════════════════════════════════════════
+//
+// Returns 3-5 short reply suggestions ("smart reply chips") that the
+// composer can render above the input. The contract is intentionally
+// lean: the caller forwards the last few messages from the active
+// thread and we ask the configured text provider for a tiny JSON
+// array of replies.
+//
+// The endpoint is rate-limited via the existing word-credit budget
+// (50 words estimate), so spammy clients can't drain quota by typing
+// a single character.
+
+#[derive(Debug, Deserialize)]
+pub struct ChatSuggestionsRequest {
+    /// Most recent thread messages. Order: oldest -> newest. The last
+    /// entry is what we want to reply to. We cap at 6 entries on the
+    /// server to keep prompts cheap regardless of what the client sends.
+    pub messages: Vec<ChatSuggestionMessage>,
+    /// Optional locale hint (e.g. "es"). Falls back to English.
+    pub locale: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ChatSuggestionMessage {
+    /// "me" = the local user, "them" = the other party. Anything else
+    /// is treated as "them" so callers can pass usernames safely.
+    pub role: String,
+    pub text: String,
+}
+
+pub async fn chat_suggestions(
+    State(state): State<AiState>,
+    auth: AuthUser,
+    Json(req): Json<ChatSuggestionsRequest>,
+) -> Result<Json<Value>, ApiError> {
+    if req.messages.is_empty() {
+        return Ok(Json(
+            json!({"data": {"suggestions": Vec::<String>::new(), "provider": "none"}}),
+        ));
+    }
+    credits::deduct(state.db(), auth.user_id, CreditKind::Words(50)).await?;
+
+    let locale = req.locale.as_deref().unwrap_or("en");
+    let mut transcript = String::new();
+    for m in req.messages.iter().rev().take(6).rev() {
+        let speaker = if m.role == "me" { "Me" } else { "Them" };
+        // 240 chars per turn keeps the prompt < ~1.5kB even with 6 turns.
+        let text = if m.text.len() > 240 {
+            &m.text[..240]
+        } else {
+            m.text.as_str()
+        };
+        transcript.push_str(&format!("{speaker}: {text}\n"));
+    }
+
+    let system = format!(
+        "You generate short, natural reply suggestions for a chat app. \
+         Return ONLY a JSON array of 3 to 5 strings, no prose, no markdown. \
+         Each reply must be <= 40 characters, friendly, locale={locale}. \
+         Do not include emoji-only replies. Do not repeat the user's last message.",
+    );
+
+    let chain = state
+        .registry
+        .chain_for(crate::providers::Capability::Text)
+        .await;
+    let opts = GenOpts {
+        max_tokens: Some(150),
+        temperature: Some(0.7),
+        system_prompt: Some(system),
+    };
+
+    match factory::try_text(&chain, &transcript, &opts).await {
+        Ok(res) => {
+            let suggestions = parse_suggestion_array(&res.content);
+            credits::log_usage(
+                state.db(),
+                credits::UsageLog {
+                    user_id: auth.user_id,
+                    provider: &res.provider,
+                    kind: "chat_suggestions",
+                    tokens_used: res.tokens_used as i32,
+                    images_generated: 0,
+                    cost_cents: 0,
+                    success: true,
+                    error_message: None,
+                },
+            )
+            .await;
+            Ok(Json(
+                json!({"data": {"suggestions": suggestions, "provider": res.provider}}),
+            ))
+        }
+        Err(e) => Err(ApiError::Internal(format!(
+            "AI chat-suggestions failed: {}",
+            e
+        ))),
+    }
+}
+
+/// Defensive parser: providers occasionally return prose around the
+/// array, so we extract the first JSON array we see and fall back to
+/// splitting by newline if parsing fails.
+fn parse_suggestion_array(raw: &str) -> Vec<String> {
+    let trimmed = raw.trim();
+    if let (Some(start), Some(end)) = (trimmed.find('['), trimmed.rfind(']'))
+        && start < end
+    {
+        let slice = &trimmed[start..=end];
+        if let Ok(arr) = serde_json::from_str::<Vec<String>>(slice) {
+            return arr
+                .into_iter()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .take(5)
+                .collect();
+        }
+    }
+    trimmed
+        .lines()
+        .map(|l| {
+            l.trim()
+                .trim_start_matches(|c: char| {
+                    c == '-' || c == '*' || c.is_ascii_digit() || c == '.'
+                })
+                .trim()
+                .trim_matches('"')
+                .to_string()
+        })
+        .filter(|s| !s.is_empty())
+        .take(5)
+        .collect()
+}
+
 #[derive(Debug, Deserialize)]
 pub struct DescribeImageRequest {
     pub image_url: String,
@@ -420,7 +587,9 @@ pub async fn describe_image(
     // Describe-image currently uses OpenAI vision only (no fallback).
     let key = std::env::var("OPENAI_API_KEY").unwrap_or_default();
     if key.is_empty() {
-        return Err(ApiError::Internal("describe-image requires OPENAI_API_KEY".into()));
+        return Err(ApiError::Internal(
+            "describe-image requires OPENAI_API_KEY".into(),
+        ));
     }
 
     // Prefer a dedicated vision model env var and fall back to the generic
@@ -428,7 +597,11 @@ pub async fn describe_image(
     let vision_model = std::env::var("OPENAI_VISION_MODEL")
         .ok()
         .filter(|s| !s.trim().is_empty())
-        .or_else(|| std::env::var("OPENAI_MODEL").ok().filter(|s| !s.trim().is_empty()))
+        .or_else(|| {
+            std::env::var("OPENAI_MODEL")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+        })
         .unwrap_or_else(|| "gpt-4o-mini".to_string());
 
     let body = json!({
@@ -455,7 +628,10 @@ pub async fn describe_image(
     if !resp.status().is_success() {
         let status = resp.status();
         let text = resp.text().await.unwrap_or_default();
-        return Err(ApiError::Internal(format!("OpenAI error {}: {}", status, text)));
+        return Err(ApiError::Internal(format!(
+            "OpenAI error {}: {}",
+            status, text
+        )));
     }
 
     let body: Value = resp
@@ -517,22 +693,24 @@ pub async fn admin_list_providers(
 
     let data: Vec<Value> = rows
         .into_iter()
-        .map(|(id, name, ptype, cap, key_enc, mt, mi, enabled, priority)| {
-            let masked = crate::crypto::decrypt(&state.enc_key, &key_enc)
-                .map(|k| shared::crypto::mask_secret(&k))
-                .unwrap_or_else(|_| "****".to_string());
-            json!({
-                "id": id,
-                "name": name,
-                "provider_type": ptype,
-                "capability": cap,
-                "api_key_masked": masked,
-                "model_text": mt,
-                "model_image": mi,
-                "enabled": enabled,
-                "priority": priority,
-            })
-        })
+        .map(
+            |(id, name, ptype, cap, key_enc, mt, mi, enabled, priority)| {
+                let masked = crate::crypto::decrypt(&state.enc_key, &key_enc)
+                    .map(|k| shared::crypto::mask_secret(&k))
+                    .unwrap_or_else(|_| "****".to_string());
+                json!({
+                    "id": id,
+                    "name": name,
+                    "provider_type": ptype,
+                    "capability": cap,
+                    "api_key_masked": masked,
+                    "model_text": mt,
+                    "model_image": mi,
+                    "enabled": enabled,
+                    "priority": priority,
+                })
+            },
+        )
         .collect();
 
     Ok(Json(json!({ "data": data })))
@@ -606,19 +784,23 @@ pub async fn admin_update_provider(
     }
 
     if let Some(mt) = &req.model_text {
-        sqlx::query("UPDATE ai_provider_config SET model_text = $1, updated_at = NOW() WHERE id = $2")
-            .bind(mt)
-            .bind(id)
-            .execute(state.db())
-            .await?;
+        sqlx::query(
+            "UPDATE ai_provider_config SET model_text = $1, updated_at = NOW() WHERE id = $2",
+        )
+        .bind(mt)
+        .bind(id)
+        .execute(state.db())
+        .await?;
     }
 
     if let Some(mi) = &req.model_image {
-        sqlx::query("UPDATE ai_provider_config SET model_image = $1, updated_at = NOW() WHERE id = $2")
-            .bind(mi)
-            .bind(id)
-            .execute(state.db())
-            .await?;
+        sqlx::query(
+            "UPDATE ai_provider_config SET model_image = $1, updated_at = NOW() WHERE id = $2",
+        )
+        .bind(mi)
+        .bind(id)
+        .execute(state.db())
+        .await?;
     }
 
     if let Some(enabled) = req.enabled {
@@ -630,11 +812,13 @@ pub async fn admin_update_provider(
     }
 
     if let Some(priority) = req.priority {
-        sqlx::query("UPDATE ai_provider_config SET priority = $1, updated_at = NOW() WHERE id = $2")
-            .bind(priority)
-            .bind(id)
-            .execute(state.db())
-            .await?;
+        sqlx::query(
+            "UPDATE ai_provider_config SET priority = $1, updated_at = NOW() WHERE id = $2",
+        )
+        .bind(priority)
+        .bind(id)
+        .execute(state.db())
+        .await?;
     }
 
     Ok(Json(json!({ "data": { "updated": true } })))
@@ -684,29 +868,29 @@ pub async fn admin_test_provider(
 
     // Each match arm is mutually exclusive so moving is OK; the compiler validates this.
     let provider: std::sync::Arc<dyn crate::providers::AiProvider> = match kind {
-        crate::providers::ProviderKind::Openai => std::sync::Arc::new(
-            crate::providers::openai::OpenAiProvider::new(
+        crate::providers::ProviderKind::Openai => {
+            std::sync::Arc::new(crate::providers::openai::OpenAiProvider::new(
                 state.http.clone(),
                 api_key,
                 model_text,
                 model_image,
-            ),
-        ),
-        crate::providers::ProviderKind::Anthropic => std::sync::Arc::new(
-            crate::providers::anthropic::AnthropicProvider::new(
+            ))
+        }
+        crate::providers::ProviderKind::Anthropic => {
+            std::sync::Arc::new(crate::providers::anthropic::AnthropicProvider::new(
                 state.http.clone(),
                 api_key,
                 model_text,
-            ),
-        ),
-        crate::providers::ProviderKind::Gemini => std::sync::Arc::new(
-            crate::providers::gemini::GeminiProvider::new(
+            ))
+        }
+        crate::providers::ProviderKind::Gemini => {
+            std::sync::Arc::new(crate::providers::gemini::GeminiProvider::new(
                 state.http.clone(),
                 api_key,
                 model_text,
                 model_image,
-            ),
-        ),
+            ))
+        }
     };
 
     // Tiny probe
@@ -744,8 +928,9 @@ pub async fn health_check() -> Json<Value> {
 /// covered.
 pub async fn admin_providers_health(
     State(state): State<AiState>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ManageAi, &state.app).await?;
     let snapshot = state.registry.health_snapshot().await;
 
     let text_covered = snapshot
@@ -775,4 +960,176 @@ pub async fn admin_providers_health(
             },
         }
     })))
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Moderation
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Deserialize)]
+pub struct ModerateRequest {
+    pub items: Vec<ModerateItem>,
+}
+
+#[derive(Deserialize)]
+pub struct ModerateItem {
+    pub text: Option<String>,
+    pub image_url: Option<String>,
+    pub kind: String, // "post", "comment", "message", "image", "profile"
+    pub target_id: i64,
+    pub user_id: i64,
+}
+
+pub async fn moderate_content(
+    State(state): State<AiState>,
+    Json(body): Json<ModerateRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let api_key = state.app.config.openai_api_key.as_deref().unwrap_or("");
+    if api_key.is_empty() {
+        return Err(ApiError::Internal("OpenAI API key not configured".into()));
+    }
+
+    let client = &reqwest::Client::new();
+    let mut results = Vec::new();
+
+    for item in &body.items {
+        let text = item.text.as_deref().unwrap_or("");
+        let image_url = item.image_url.as_deref();
+
+        // Skip items with no content to moderate
+        if text.is_empty() && image_url.is_none() {
+            continue;
+        }
+
+        // Moderate text if present, otherwise moderate image
+        let moderation_result = if !text.is_empty() {
+            openai::moderate_text(client, api_key, text).await
+        } else if let Some(url) = image_url {
+            openai::moderate_text(client, api_key, url).await
+        } else {
+            continue;
+        };
+
+        match moderation_result {
+            Ok(result) => {
+                let max_score = result
+                    .category_scores
+                    .values()
+                    .cloned()
+                    .fold(0.0f64, f64::max);
+
+                let action = moderation::decide_action(result.flagged, max_score);
+
+                // Store result in moderation_queue with correct column names
+                let _ = sqlx::query(
+                    "INSERT INTO moderation_queue (target_type, target_id, submitted_by_user_id, content_text, content_image_url, openai_flagged, openai_categories, openai_scores, auto_action, status, created_at)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())
+                     ON CONFLICT (target_type, target_id)
+                     DO UPDATE SET content_text = EXCLUDED.content_text, content_image_url = EXCLUDED.content_image_url,
+                                   openai_flagged = EXCLUDED.openai_flagged, openai_categories = EXCLUDED.openai_categories,
+                                   openai_scores = EXCLUDED.openai_scores, auto_action = EXCLUDED.auto_action",
+                )
+                .bind(&item.kind)
+                .bind(item.target_id)
+                .bind(item.user_id)
+                .bind(text)
+                .bind(image_url)
+                .bind(result.flagged)
+                .bind(serde_json::to_value(&result.categories).unwrap_or_default())
+                .bind(serde_json::to_value(&result.category_scores).unwrap_or_default())
+                .bind(action)
+                .bind(action)
+                .execute(state.db())
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e);
+                    ApiError::Internal("DB error".into())
+                })?;
+
+                // Apply the moderation action
+                let _ = moderation::apply_moderation_action(
+                    state.db(),
+                    &item.kind,
+                    item.target_id,
+                    action,
+                )
+                .await;
+
+                results.push(serde_json::json!({
+                    "target_id": item.target_id,
+                    "kind": item.kind,
+                    "flagged": result.flagged,
+                    "action": action,
+                    "max_score": max_score,
+                }));
+            }
+            Err(e) => {
+                tracing::error!(error = %e, "Moderation API error");
+                results.push(serde_json::json!({
+                    "target_id": item.target_id,
+                    "kind": item.kind,
+                    "error": e,
+                }));
+            }
+        }
+    }
+
+    Ok(Json(serde_json::json!({ "results": results })))
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// OCR (OCR.space)
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Deserialize)]
+pub struct OcrRequest {
+    pub image_url: String,
+}
+
+pub async fn ocr_extract(
+    State(_state): State<AppState>,
+    Json(body): Json<OcrRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let api_key = std::env::var("OCR_SPACE_API_KEY").unwrap_or_default();
+    if api_key.is_empty() {
+        return Err(ApiError::Internal("OCR API key not configured".into()));
+    }
+
+    let client = &reqwest::Client::new();
+    match ocrspace::extract_text(client, &api_key, &body.image_url).await {
+        Ok(result) => Ok(Json(serde_json::json!({
+            "extracted_text": result.extracted_text,
+            "confidence": result.confidence,
+        }))),
+        Err(e) => Err(ApiError::Internal(format!("OCR failed: {}", e))),
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Audio Transcription (Cloudflare Workers AI)
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Deserialize)]
+pub struct TranscribeRequest {
+    pub audio_url: String,
+}
+
+pub async fn transcribe_audio(
+    State(_state): State<AppState>,
+    Json(body): Json<TranscribeRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    let account_id = std::env::var("CLOUDFLARE_ACCOUNT_ID").unwrap_or_default();
+    let api_token = std::env::var("CLOUDFLARE_AI_TOKEN").unwrap_or_default();
+
+    if account_id.is_empty() || api_token.is_empty() {
+        return Err(ApiError::Internal("Cloudflare AI not configured".into()));
+    }
+
+    let client = &reqwest::Client::new();
+    match cloudflare_ai::transcribe(client, &account_id, &api_token, &body.audio_url).await {
+        Ok(transcript) => Ok(Json(serde_json::json!({
+            "transcript": transcript,
+        }))),
+        Err(e) => Err(ApiError::Internal(format!("Transcription failed: {}", e))),
+    }
 }

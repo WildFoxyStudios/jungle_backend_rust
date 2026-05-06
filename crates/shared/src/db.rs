@@ -18,6 +18,17 @@ pub async fn create_pool(database_url: &str) -> PgPool {
 }
 
 pub async fn run_migrations(pool: &PgPool) {
+    let skip = std::env::var("SKIP_DB_MIGRATIONS")
+        .map(|v| {
+            let v = v.trim().to_ascii_lowercase();
+            v == "1" || v == "true" || v == "yes"
+        })
+        .unwrap_or(false);
+    if skip {
+        tracing::info!("Skipping database migrations (SKIP_DB_MIGRATIONS=true)");
+        return;
+    }
+
     sqlx::migrate!("../../migrations")
         .run(pool)
         .await

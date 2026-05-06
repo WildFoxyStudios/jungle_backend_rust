@@ -1,4 +1,5 @@
 pub mod providers;
+pub mod signature;
 
 use async_trait::async_trait;
 use rust_decimal::Decimal;
@@ -11,15 +12,9 @@ use std::collections::HashMap;
 pub trait PaymentGateway: Send + Sync {
     fn provider_name(&self) -> &'static str;
 
-    async fn create_session(
-        &self,
-        params: PaymentParams,
-    ) -> Result<PaymentSession, PaymentError>;
+    async fn create_session(&self, params: PaymentParams) -> Result<PaymentSession, PaymentError>;
 
-    async fn verify_payment(
-        &self,
-        reference: &str,
-    ) -> Result<PaymentStatus, PaymentError>;
+    async fn verify_payment(&self, reference: &str) -> Result<PaymentStatus, PaymentError>;
 
     async fn handle_webhook(
         &self,
@@ -113,27 +108,37 @@ pub fn create_gateway(provider: &str) -> Result<Box<dyn PaymentGateway>, Payment
     match provider {
         "stripe" => Ok(Box::new(providers::stripe::StripeGateway::from_env())),
         "paypal" => Ok(Box::new(providers::paypal::PayPalGateway::from_env())),
-        "authorize_net" | "authorize" | "authorizenet" => {
-            Ok(Box::new(providers::authorize_net::AuthorizeNetGateway::from_env()))
-        }
+        "authorize_net" | "authorize" | "authorizenet" => Ok(Box::new(
+            providers::authorize_net::AuthorizeNetGateway::from_env(),
+        )),
         "paystack" => Ok(Box::new(providers::paystack::PayStackGateway::from_env())),
-        "flutterwave" => Ok(Box::new(providers::flutterwave::FlutterwaveGateway::from_env())),
+        "flutterwave" => Ok(Box::new(
+            providers::flutterwave::FlutterwaveGateway::from_env(),
+        )),
         "razorpay" => Ok(Box::new(providers::razorpay::RazorpayGateway::from_env())),
         "coinbase" => Ok(Box::new(providers::coinbase::CoinbaseGateway::from_env())),
         "braintree" => Ok(Box::new(providers::braintree::BraintreeGateway::from_env())),
-        "bank_transfer" => Ok(Box::new(providers::bank_transfer::BankTransferGateway::new())),
+        "bank_transfer" => Ok(Box::new(
+            providers::bank_transfer::BankTransferGateway::new(),
+        )),
         "iyzipay" => Ok(Box::new(providers::iyzipay::IyzipayGateway::from_env())),
         "cashfree" => Ok(Box::new(providers::cashfree::CashfreeGateway::from_env())),
         "yoomoney" => Ok(Box::new(providers::yoomoney::YooMoneyGateway::from_env())),
         "aamarpay" => Ok(Box::new(providers::aamarpay::AamarPayGateway::from_env())),
         "fortumo" => Ok(Box::new(providers::fortumo::FortumoGateway::from_env())),
-        "2checkout" => Ok(Box::new(providers::twocheckout::TwoCheckoutGateway::from_env())),
-        "coinpayments" => Ok(Box::new(providers::coinpayments::CoinPaymentsGateway::from_env())),
+        "2checkout" => Ok(Box::new(
+            providers::twocheckout::TwoCheckoutGateway::from_env(),
+        )),
+        "coinpayments" => Ok(Box::new(
+            providers::coinpayments::CoinPaymentsGateway::from_env(),
+        )),
         "payfast" => Ok(Box::new(providers::payfast::PayFastGateway::from_env())),
         "paysera" => Ok(Box::new(providers::paysera::PayseraGateway::from_env())),
-        "securionpay" => Ok(Box::new(providers::securionpay::SecurionPayGateway::from_env())),
+        "securionpay" => Ok(Box::new(
+            providers::securionpay::SecurionPayGateway::from_env(),
+        )),
         "ngenius" => Ok(Box::new(providers::ngenius::NGeniusGateway::from_env())),
-        "paypro_bitcoin" => Ok(Box::new(providers::paypro::PayProBitcoinGateway::from_env())),
+        "paypro_bitcoin" => Ok(Box::new(providers::paypro_api::PayProApiGateway::from_env())),
         _ => Err(PaymentError::UnsupportedProvider(provider.into())),
     }
 }
@@ -145,11 +150,22 @@ mod tests {
     #[test]
     fn test_create_gateway_known_providers() {
         let known = [
-            "stripe", "paypal", "paystack", "flutterwave", "razorpay",
-            "coinbase", "braintree", "bank_transfer", "iyzipay",
+            "stripe",
+            "paypal",
+            "paystack",
+            "flutterwave",
+            "razorpay",
+            "coinbase",
+            "braintree",
+            "bank_transfer",
+            "iyzipay",
         ];
         for name in known {
-            assert!(create_gateway(name).is_ok(), "Failed to create gateway: {}", name);
+            assert!(
+                create_gateway(name).is_ok(),
+                "Failed to create gateway: {}",
+                name
+            );
         }
     }
 
@@ -168,8 +184,14 @@ mod tests {
     fn test_provider_names() {
         assert_eq!(create_gateway("stripe").unwrap().provider_name(), "stripe");
         assert_eq!(create_gateway("paypal").unwrap().provider_name(), "paypal");
-        assert_eq!(create_gateway("paystack").unwrap().provider_name(), "paystack");
-        assert_eq!(create_gateway("bank_transfer").unwrap().provider_name(), "bank_transfer");
+        assert_eq!(
+            create_gateway("paystack").unwrap().provider_name(),
+            "paystack"
+        );
+        assert_eq!(
+            create_gateway("bank_transfer").unwrap().provider_name(),
+            "bank_transfer"
+        );
     }
 
     #[tokio::test]

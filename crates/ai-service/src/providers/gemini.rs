@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use super::{AiError, AiProvider, Capability, GenOpts, GenResult, ImgOpts, ImgResult, ProviderKind};
+use super::{
+    AiError, AiProvider, Capability, GenOpts, GenResult, ImgOpts, ImgResult, ProviderKind,
+};
 
 #[derive(Clone)]
 pub struct GeminiProvider {
@@ -155,12 +157,16 @@ impl AiProvider for GeminiProvider {
             self.model_text, self.api_key
         );
 
-        let resp = self.client.post(&url).json(&body).send().await.map_err(|e| {
-            AiError::NetworkError {
+        let resp = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| AiError::NetworkError {
                 provider: "gemini".into(),
                 message: e.to_string(),
-            }
-        })?;
+            })?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -172,10 +178,11 @@ impl AiProvider for GeminiProvider {
             });
         }
 
-        let parsed: GenerateContentResponse = resp.json().await.map_err(|e| AiError::ParseError {
-            provider: "gemini".into(),
-            message: e.to_string(),
-        })?;
+        let parsed: GenerateContentResponse =
+            resp.json().await.map_err(|e| AiError::ParseError {
+                provider: "gemini".into(),
+                message: e.to_string(),
+            })?;
 
         let content = parsed
             .candidates
@@ -188,7 +195,10 @@ impl AiProvider for GeminiProvider {
 
         Ok(GenResult {
             content,
-            tokens_used: parsed.usage_metadata.map(|u| u.total_token_count).unwrap_or(0),
+            tokens_used: parsed
+                .usage_metadata
+                .map(|u| u.total_token_count)
+                .unwrap_or(0),
             provider: "gemini".into(),
             model: self.model_text.clone(),
         })
@@ -213,12 +223,16 @@ impl AiProvider for GeminiProvider {
             self.model_image, self.api_key
         );
 
-        let resp = self.client.post(&url).json(&body).send().await.map_err(|e| {
-            AiError::NetworkError {
+        let resp = self
+            .client
+            .post(&url)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| AiError::NetworkError {
                 provider: "gemini".into(),
                 message: e.to_string(),
-            }
-        })?;
+            })?;
 
         let status = resp.status();
         if !status.is_success() {

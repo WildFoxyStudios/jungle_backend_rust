@@ -9,6 +9,7 @@ use serde_json::{json, Value};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
+    permissions::Permission,
 };
 use sqlx::FromRow;
 use time::OffsetDateTime;
@@ -35,8 +36,9 @@ pub struct LiveStreamRow {
 /// GET /v1/admin/live-streams — currently active broadcasts
 pub async fn list_live_streams(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ManagePosts, &state).await?;
     let rows = sqlx::query_as::<_, LiveStreamRow>(
         r#"
         SELECT ls.id, ls.user_id, u.username, u.first_name, u.last_name, u.avatar,
@@ -67,8 +69,9 @@ pub async fn list_live_streams(
 /// streamers by viewer-hours over the last 7 days.
 pub async fn live_stats(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ViewDashboard, &state).await?;
     // Currently-live count + viewers sum
     let (active_streams, active_viewers): (i64, i64) = sqlx::query_as(
         r#"
@@ -144,9 +147,10 @@ pub async fn live_stats(
 /// DELETE /v1/admin/live-streams/{id} — force-end an active stream
 pub async fn force_end_live_stream(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ManagePosts, &state).await?;
     let updated = sqlx::query(
         "UPDATE live_streams SET ended_at = NOW(), status = 'ended' WHERE id = $1 AND ended_at IS NULL",
     )
@@ -186,9 +190,10 @@ pub struct EmailCampaignRequest {
 /// placeholder substitution and respect `email_rate_limit` from site_config.
 pub async fn create_email_campaign(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     Json(req): Json<EmailCampaignRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::SendNewsletter, &state).await?;
     req.validate()
         .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
@@ -276,8 +281,9 @@ pub async fn create_email_campaign(
 /// deployed" because every feature lands with a migration. No invented data.
 pub async fn list_changelog(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ViewDashboard, &state).await?;
     #[derive(Debug, Serialize, FromRow)]
     struct MigrationRow {
         version: i64,
@@ -326,8 +332,9 @@ pub async fn list_changelog(
 /// exist (graceful degradation).
 pub async fn cronjobs_status(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ManageCronjobs, &state).await?;
     let rows = sqlx::query_as::<_, (String, OffsetDateTime, String)>(
         r#"
         SELECT DISTINCT ON (name) name, ran_at, status
@@ -368,8 +375,9 @@ pub struct CronjobConfigRow {
 /// GET /v1/admin/cronjob-config — full catalog + enabled flag + last run
 pub async fn list_cronjob_config(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ManageCronjobs, &state).await?;
     let rows = sqlx::query_as::<_, CronjobConfigRow>(
         r#"
         SELECT c.job_name, c.schedule, c.enabled,
@@ -404,10 +412,11 @@ pub struct UpdateCronjobConfig {
 /// PUT /v1/admin/cronjob-config/{name} — toggle / reschedule a single job
 pub async fn update_cronjob_config(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
     axum::extract::Path(name): axum::extract::Path<String>,
     Json(req): Json<UpdateCronjobConfig>,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ManageCronjobs, &state).await?;
     // Upsert — if admin enables a never-seen-before job, create the row.
     let row = sqlx::query_as::<_, CronjobConfigRow>(
         r#"

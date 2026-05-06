@@ -116,32 +116,28 @@ pub async fn deduct(pool: &PgPool, user_id: i64, kind: CreditKind) -> Result<(),
     let _ = get_or_init(pool, user_id).await?;
 
     let affected = match kind {
-        CreditKind::Words(n) => {
-            sqlx::query(
-                r#"UPDATE user_ai_credits
+        CreditKind::Words(n) => sqlx::query(
+            r#"UPDATE user_ai_credits
                       SET words_remaining = words_remaining - $2,
                           updated_at = NOW()
                     WHERE user_id = $1 AND words_remaining >= $2"#,
-            )
-            .bind(user_id)
-            .bind(n)
-            .execute(pool)
-            .await?
-            .rows_affected()
-        }
-        CreditKind::Images(n) => {
-            sqlx::query(
-                r#"UPDATE user_ai_credits
+        )
+        .bind(user_id)
+        .bind(n)
+        .execute(pool)
+        .await?
+        .rows_affected(),
+        CreditKind::Images(n) => sqlx::query(
+            r#"UPDATE user_ai_credits
                       SET images_remaining = images_remaining - $2,
                           updated_at = NOW()
                     WHERE user_id = $1 AND images_remaining >= $2"#,
-            )
-            .bind(user_id)
-            .bind(n)
-            .execute(pool)
-            .await?
-            .rows_affected()
-        }
+        )
+        .bind(user_id)
+        .bind(n)
+        .execute(pool)
+        .await?
+        .rows_affected(),
     };
 
     if affected == 0 {

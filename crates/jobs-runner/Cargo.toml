@@ -8,6 +8,7 @@ shared = { workspace = true }
 tokio = { workspace = true }
 sqlx = { workspace = true }
 serde_json = { workspace = true }
+serde_urlencoded = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 redis = { workspace = true }
@@ -15,3 +16,6 @@ time = { workspace = true }
 reqwest = { workspace = true }
 futures = { workspace = true }
 async-nats = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = "0.4"

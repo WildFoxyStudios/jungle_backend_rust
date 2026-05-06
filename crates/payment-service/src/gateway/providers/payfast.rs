@@ -3,8 +3,8 @@ use rust_decimal::Decimal;
 use std::collections::HashMap;
 
 use crate::gateway::{
-    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus,
-    PaymentStatusKind, RefundResult, WebhookEvent,
+    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
+    RefundResult, WebhookEvent,
 };
 
 pub struct PayFastGateway {
@@ -45,7 +45,11 @@ impl PayFastGateway {
         let with_passphrase = if self.passphrase.is_empty() {
             param_string
         } else {
-            format!("{}&passphrase={}", param_string, urlencoding::encode(&self.passphrase))
+            format!(
+                "{}&passphrase={}",
+                param_string,
+                urlencoding::encode(&self.passphrase)
+            )
         };
 
         format!("{:x}", md5::compute(with_passphrase.as_bytes()))
@@ -66,7 +70,14 @@ impl PaymentGateway for PayFastGateway {
             ("merchant_key".into(), self.merchant_key.clone()),
             ("return_url".into(), params.return_url.clone()),
             ("cancel_url".into(), params.cancel_url.clone()),
-            ("notify_url".into(), params.metadata.get("webhook_url").cloned().unwrap_or_default()),
+            (
+                "notify_url".into(),
+                params
+                    .metadata
+                    .get("webhook_url")
+                    .cloned()
+                    .unwrap_or_default(),
+            ),
             ("m_payment_id".into(), payment_id.clone()),
             ("amount".into(), format!("{:.2}", params.amount)),
             ("item_name".into(), params.description.clone()),
@@ -107,8 +118,12 @@ impl PaymentGateway for PayFastGateway {
             let now = time::OffsetDateTime::now_utc();
             format!(
                 "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}+00:00",
-                now.year(), now.month() as u8, now.day(),
-                now.hour(), now.minute(), now.second()
+                now.year(),
+                now.month() as u8,
+                now.day(),
+                now.hour(),
+                now.minute(),
+                now.second()
             )
         };
 
@@ -131,7 +146,10 @@ impl PaymentGateway for PayFastGateway {
         };
 
         Ok(PaymentStatus {
-            provider_ref: result["data"]["pf_payment_id"].as_str().unwrap_or("").to_string(),
+            provider_ref: result["data"]["pf_payment_id"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
             status,
             amount: result["data"]["amount_gross"]
                 .as_str()
@@ -140,7 +158,11 @@ impl PaymentGateway for PayFastGateway {
         })
     }
 
-    async fn handle_webhook(&self, payload: &[u8], _signature: &str) -> Result<WebhookEvent, PaymentError> {
+    async fn handle_webhook(
+        &self,
+        payload: &[u8],
+        _signature: &str,
+    ) -> Result<WebhookEvent, PaymentError> {
         let form: HashMap<String, String> = serde_urlencoded::from_bytes(payload)
             .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
@@ -166,7 +188,10 @@ impl PaymentGateway for PayFastGateway {
         };
 
         Ok(WebhookEvent {
-            event_type: form.get("payment_status").cloned().unwrap_or_else(|| "unknown".into()),
+            event_type: form
+                .get("payment_status")
+                .cloned()
+                .unwrap_or_else(|| "unknown".into()),
             provider_ref: form.get("pf_payment_id").cloned().unwrap_or_default(),
             status,
             amount: form.get("amount_gross").and_then(|s| s.parse().ok()),
@@ -175,7 +200,11 @@ impl PaymentGateway for PayFastGateway {
         })
     }
 
-    async fn refund(&self, _tx_id: &str, _amount: Option<Decimal>) -> Result<RefundResult, PaymentError> {
+    async fn refund(
+        &self,
+        _tx_id: &str,
+        _amount: Option<Decimal>,
+    ) -> Result<RefundResult, PaymentError> {
         // PayFast refunds are initiated via their merchant dashboard, not via API
         Err(PaymentError::ProviderError(
             "PayFast refunds must be processed via the merchant dashboard".to_string(),

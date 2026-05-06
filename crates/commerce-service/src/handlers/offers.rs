@@ -1,9 +1,9 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -65,7 +65,9 @@ pub async fn list_offers(
     let has_more = offers.len() as i64 > limit;
     let offers: Vec<_> = offers.into_iter().take(limit as usize).collect();
 
-    Ok(Json(json!({ "data": offers, "meta": { "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": offers, "meta": { "has_more": has_more } }),
+    ))
 }
 
 pub async fn create_offer(
@@ -75,10 +77,14 @@ pub async fn create_offer(
 ) -> Result<Json<Value>, ApiError> {
     req.validate().map_err(ApiError::from)?;
 
-    let expires_at = req.expires_at.as_deref().map(|s| {
-        OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
-            .map_err(|_| ApiError::BadRequest("Invalid expires_at format. Use RFC3339.".into()))
-    }).transpose()?;
+    let expires_at = req
+        .expires_at
+        .as_deref()
+        .map(|s| {
+            OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
+                .map_err(|_| ApiError::BadRequest("Invalid expires_at format. Use RFC3339.".into()))
+        })
+        .transpose()?;
 
     let offer = sqlx::query_as::<_, OfferRow>(
         r#"
@@ -130,7 +136,10 @@ pub async fn delete_offer(
         return Err(ApiError::Forbidden("".into()));
     }
 
-    sqlx::query("DELETE FROM offers WHERE id = $1").bind(id).execute(&state.db).await?;
+    sqlx::query("DELETE FROM offers WHERE id = $1")
+        .bind(id)
+        .execute(&state.db)
+        .await?;
     Ok(Json(json!({ "data": { "deleted": true } })))
 }
 
@@ -161,10 +170,14 @@ pub async fn update_offer(
         return Err(ApiError::Forbidden("".into()));
     }
 
-    let expires_at = req.expires_at.as_deref().map(|s| {
-        OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
-            .map_err(|_| ApiError::BadRequest("Invalid expires_at format".into()))
-    }).transpose()?;
+    let expires_at = req
+        .expires_at
+        .as_deref()
+        .map(|s| {
+            OffsetDateTime::parse(s, &time::format_description::well_known::Rfc3339)
+                .map_err(|_| ApiError::BadRequest("Invalid expires_at format".into()))
+        })
+        .transpose()?;
 
     let offer = sqlx::query_as::<_, OfferRow>(
         r#"UPDATE offers SET

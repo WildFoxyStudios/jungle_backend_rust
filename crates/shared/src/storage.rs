@@ -59,13 +59,8 @@ impl S3Storage {
             return None;
         }
 
-        let creds = aws_sdk_s3::config::Credentials::new(
-            &access_key,
-            &secret_key,
-            None,
-            None,
-            "env",
-        );
+        let creds =
+            aws_sdk_s3::config::Credentials::new(&access_key, &secret_key, None, None, "env");
 
         let config = aws_sdk_s3::Config::builder()
             .behavior_version(aws_sdk_s3::config::BehaviorVersion::latest())
@@ -78,8 +73,8 @@ impl S3Storage {
         let client = aws_sdk_s3::Client::from_conf(config);
 
         // S3_PUBLIC_URL allows a separate public-facing URL (e.g. R2 custom domain, CloudFront, r2.dev)
-        let public_url = std::env::var("S3_PUBLIC_URL")
-            .unwrap_or_else(|_| format!("{}/{}", endpoint, bucket));
+        let public_url =
+            std::env::var("S3_PUBLIC_URL").unwrap_or_else(|_| format!("{}/{}", endpoint, bucket));
 
         Some(Self {
             client,
@@ -157,7 +152,12 @@ impl LocalStorage {
 
 #[async_trait]
 impl StorageProvider for LocalStorage {
-    async fn upload(&self, key: &str, data: &[u8], _content_type: &str) -> Result<String, ApiError> {
+    async fn upload(
+        &self,
+        key: &str,
+        data: &[u8],
+        _content_type: &str,
+    ) -> Result<String, ApiError> {
         let path = std::path::Path::new(&self.base_path).join(key);
         if let Some(parent) = path.parent() {
             tokio::fs::create_dir_all(parent)

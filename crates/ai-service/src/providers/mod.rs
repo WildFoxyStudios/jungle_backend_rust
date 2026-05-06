@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 pub mod anthropic;
 pub mod factory;
 pub mod gemini;
+pub mod cloudflare_ai;
+pub mod ocrspace;
 pub mod openai;
 
 pub use factory::ProviderRegistry;
@@ -58,9 +60,9 @@ pub struct GenOpts {
 #[derive(Debug, Clone, Default)]
 pub struct ImgOpts {
     pub n: u32,
-    pub size: Option<String>,       // e.g. "1024x1024"
-    pub quality: Option<String>,    // standard | hd
-    pub style: Option<String>,      // vivid | natural
+    pub size: Option<String>,    // e.g. "1024x1024"
+    pub quality: Option<String>, // standard | hd
+    pub style: Option<String>,   // vivid | natural
 }
 
 #[derive(Debug, Clone, Serialize)]

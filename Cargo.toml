@@ -14,6 +14,7 @@ members = [
     "crates/admin-service",
     "crates/payment-service",
     "crates/realtime-service",
+    "crates/live-service",
     "crates/api-gateway",
     "crates/jobs-runner",
     "crates/ai-service",
@@ -69,6 +70,9 @@ redis = { version = "0.27", features = ["tokio-comp", "connection-manager"] }
 # HTTP client
 reqwest = { version = "0.12", features = ["json"] }
 
+# Payment gateways
+async-stripe = { version = "0.41", features = ["checkout", "runtime-tokio-hyper-rustls"] }
+
 # Utils
 rand = "0.9"
 thiserror = "2"
@@ -94,6 +98,13 @@ aws-sdk-s3 = { version = "1", features = ["behavior-version-latest"] }
 aws-config = { version = "1", features = ["behavior-version-latest"] }
 utoipa = { version = "5", features = ["axum_extras"] }
 utoipa-swagger-ui = { version = "9", features = ["axum"] }
+
+# Web Push (VAPID) — `web-push-native` builds raw `http::Request`s so we
+# can deliver them through the workspace `reqwest` client (rustls). The
+# alternative `web-push` crate hard-pulls OpenSSL via isahc/hyper-tls,
+# which we can't satisfy on the supported Windows + Linux build matrix.
+web-push-native = "0.4"
+base64ct = { version = "1", features = ["alloc"] }
 
 # Observability — OpenTelemetry tracing
 opentelemetry = "0.27"

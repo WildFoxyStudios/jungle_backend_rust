@@ -1,7 +1,10 @@
 pub mod blogs;
+pub mod countries;
 pub mod emojis;
 pub mod extras;
 pub mod forums;
 pub mod games;
+pub mod gifs;
 pub mod health;
+pub mod lookups;
 pub mod movies;

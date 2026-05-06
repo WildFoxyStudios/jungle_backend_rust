@@ -1,9 +1,15 @@
 mod handlers;
+mod millicast;
 mod routes;
 
-use shared::{auth::AppState, config::AppConfig, db, events::{NatsEventBus, NoopEventBus, EventBus}};
+use http::{Method, header};
+use shared::{
+    auth::AppState,
+    config::AppConfig,
+    db,
+    events::connect_event_bus,
+};
 use std::sync::Arc;
-use http::{header, Method};
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 #[tokio::main]
 async fn main() {
@@ -14,9 +20,15 @@ async fn main() {
     db::run_migrations(&pool).await;
 
     let redis_client = redis::Client::open(config.redis_url.as_str()).expect("Redis client");
-    let redis_conn = redis::aio::ConnectionManager::new(redis_client).await.expect("Redis connect");
+    let redis_conn = redis::aio::ConnectionManager::new(redis_client)
+        .await
+        .expect("Redis connect");
 
-    let origins: Vec<_> = config.allowed_origins.iter().filter_map(|o| o.parse().ok()).collect();
+    let origins: Vec<_> = config
+        .allowed_origins
+        .iter()
+        .filter_map(|o| o.parse().ok())
+        .collect();
     let cors = CorsLayer::new()
         .allow_origin(AllowOrigin::list(origins))
         .allow_methods(AllowMethods::list([
@@ -36,14 +48,21 @@ async fn main() {
         ]))
         .allow_credentials(true);
 
-    let event_bus: Arc<dyn EventBus> = match NatsEventBus::connect(&config.nats_url).await {
-        Ok(bus) => Arc::new(bus),
-        Err(e) => { tracing::warn!("NATS unavailable, using NoopEventBus: {e}"); Arc::new(NoopEventBus) }
+    let event_bus = connect_event_bus(&config.nats_url).await;
+    let state = AppState {
+        db: pool,
+        redis: redis_conn,
+        config: config.clone(),
+        event_bus,
     };
-    let state = AppState { db: pool, redis: redis_conn, config: config.clone(), event_bus };
     let app = routes::create_router(state)
-        .route("/metrics", axum::routing::get(shared::metrics::metrics_handler))
-        .layer(axum::middleware::from_fn(shared::metrics::metrics_middleware))
+        .route(
+            "/metrics",
+            axum::routing::get(shared::metrics::metrics_handler),
+        )
+        .layer(axum::middleware::from_fn(
+            shared::metrics::metrics_middleware,
+        ))
         .layer(cors);
     let addr = config.listen_addr();
     tracing::info!("post-service listening on {}", addr);

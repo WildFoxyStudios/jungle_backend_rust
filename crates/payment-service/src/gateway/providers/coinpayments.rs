@@ -5,8 +5,8 @@ use sha2::Sha512;
 use std::collections::HashMap;
 
 use crate::gateway::{
-    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus,
-    PaymentStatusKind, RefundResult, WebhookEvent,
+    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
+    RefundResult, WebhookEvent,
 };
 
 type HmacSha512 = Hmac<Sha512>;
@@ -30,7 +30,11 @@ impl CoinPaymentsGateway {
         }
     }
 
-    async fn api_call(&self, cmd: &str, params: &HashMap<String, String>) -> Result<serde_json::Value, PaymentError> {
+    async fn api_call(
+        &self,
+        cmd: &str,
+        params: &HashMap<String, String>,
+    ) -> Result<serde_json::Value, PaymentError> {
         let mut form: HashMap<String, String> = params.clone();
         form.insert("version".into(), "1".into());
         form.insert("key".into(), self.public_key.clone());
@@ -58,7 +62,10 @@ impl CoinPaymentsGateway {
 
         if result["error"].as_str() != Some("ok") {
             return Err(PaymentError::ProviderError(
-                result["error"].as_str().unwrap_or("CoinPayments error").to_string(),
+                result["error"]
+                    .as_str()
+                    .unwrap_or("CoinPayments error")
+                    .to_string(),
             ));
         }
 
@@ -76,10 +83,27 @@ impl PaymentGateway for CoinPaymentsGateway {
         let mut api_params = HashMap::new();
         api_params.insert("amount".into(), params.amount.to_string());
         api_params.insert("currency1".into(), params.currency.clone());
-        api_params.insert("currency2".into(), params.metadata.get("crypto").cloned().unwrap_or_else(|| "BTC".into()));
-        api_params.insert("buyer_email".into(), params.metadata.get("email").cloned().unwrap_or_default());
+        api_params.insert(
+            "currency2".into(),
+            params
+                .metadata
+                .get("crypto")
+                .cloned()
+                .unwrap_or_else(|| "BTC".into()),
+        );
+        api_params.insert(
+            "buyer_email".into(),
+            params.metadata.get("email").cloned().unwrap_or_default(),
+        );
         api_params.insert("item_name".into(), params.description.clone());
-        api_params.insert("ipn_url".into(), params.metadata.get("webhook_url").cloned().unwrap_or_default());
+        api_params.insert(
+            "ipn_url".into(),
+            params
+                .metadata
+                .get("webhook_url")
+                .cloned()
+                .unwrap_or_default(),
+        );
 
         let result = self.api_call("create_transaction", &api_params).await?;
 
@@ -109,14 +133,16 @@ impl PaymentGateway for CoinPaymentsGateway {
         Ok(PaymentStatus {
             provider_ref: txn_id.to_string(),
             status,
-            amount: result["amountf"]
-                .as_str()
-                .and_then(|s| s.parse().ok()),
+            amount: result["amountf"].as_str().and_then(|s| s.parse().ok()),
             currency: result["coin"].as_str().map(|s| s.to_string()),
         })
     }
 
-    async fn handle_webhook(&self, payload: &[u8], signature: &str) -> Result<WebhookEvent, PaymentError> {
+    async fn handle_webhook(
+        &self,
+        payload: &[u8],
+        signature: &str,
+    ) -> Result<WebhookEvent, PaymentError> {
         // CoinPayments IPN uses HMAC-SHA512 with ipn_secret
         if !self.ipn_secret.is_empty() {
             let mut mac = HmacSha512::new_from_slice(self.ipn_secret.as_bytes())
@@ -139,7 +165,10 @@ impl PaymentGateway for CoinPaymentsGateway {
             return Err(PaymentError::InvalidSignature);
         }
 
-        let status_code: i64 = form.get("status").and_then(|s| s.parse().ok()).unwrap_or(-1);
+        let status_code: i64 = form
+            .get("status")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(-1);
         let status = if status_code >= 100 {
             PaymentStatusKind::Completed
         } else if status_code >= 0 {
@@ -149,7 +178,10 @@ impl PaymentGateway for CoinPaymentsGateway {
         };
 
         Ok(WebhookEvent {
-            event_type: form.get("ipn_type").cloned().unwrap_or_else(|| "payment".into()),
+            event_type: form
+                .get("ipn_type")
+                .cloned()
+                .unwrap_or_else(|| "payment".into()),
             provider_ref: form.get("txn_id").cloned().unwrap_or_default(),
             status,
             amount: form.get("amount1").and_then(|s| s.parse().ok()),
@@ -158,7 +190,11 @@ impl PaymentGateway for CoinPaymentsGateway {
         })
     }
 
-    async fn refund(&self, _tx_id: &str, _amount: Option<Decimal>) -> Result<RefundResult, PaymentError> {
+    async fn refund(
+        &self,
+        _tx_id: &str,
+        _amount: Option<Decimal>,
+    ) -> Result<RefundResult, PaymentError> {
         // CoinPayments does not support automated refunds via API; crypto transactions are irreversible
         Err(PaymentError::ProviderError(
             "CoinPayments: crypto refunds must be processed manually".to_string(),

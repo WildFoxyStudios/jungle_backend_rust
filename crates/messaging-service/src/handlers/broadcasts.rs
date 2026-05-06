@@ -1,9 +1,9 @@
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -79,7 +79,9 @@ pub async fn create_broadcast(
     req.validate().map_err(ApiError::from)?;
 
     if req.member_ids.is_empty() {
-        return Err(ApiError::BadRequest("Broadcast must have at least one member".into()));
+        return Err(ApiError::BadRequest(
+            "Broadcast must have at least one member".into(),
+        ));
     }
 
     let mut tx = state.db.begin().await?;
@@ -279,13 +281,11 @@ pub async fn send_broadcast(
 // ---- Helpers ----
 
 async fn verify_owner(state: &AppState, broadcast_id: i64, user_id: i64) -> Result<(), ApiError> {
-    let owner_id = sqlx::query_scalar::<_, i64>(
-        "SELECT user_id FROM broadcasts WHERE id = $1",
-    )
-    .bind(broadcast_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| ApiError::NotFound("Broadcast not found".into()))?;
+    let owner_id = sqlx::query_scalar::<_, i64>("SELECT user_id FROM broadcasts WHERE id = $1")
+        .bind(broadcast_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or_else(|| ApiError::NotFound("Broadcast not found".into()))?;
 
     if owner_id != user_id {
         return Err(ApiError::Forbidden("".into()));
@@ -293,7 +293,11 @@ async fn verify_owner(state: &AppState, broadcast_id: i64, user_id: i64) -> Resu
     Ok(())
 }
 
-async fn find_or_create_direct(state: &AppState, user_a: i64, user_b: i64) -> Result<i64, ApiError> {
+async fn find_or_create_direct(
+    state: &AppState,
+    user_a: i64,
+    user_b: i64,
+) -> Result<i64, ApiError> {
     let existing = sqlx::query_scalar::<_, i64>(
         r#"
         SELECT c.id FROM conversations c

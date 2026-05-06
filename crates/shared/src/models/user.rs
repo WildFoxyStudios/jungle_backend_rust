@@ -30,6 +30,8 @@ pub struct User {
     pub language: String,
     pub is_active: bool,
     pub is_admin: bool,
+    /// Sunshine/WoWonder `admin=2` — may access admin panel (JWT + UI).
+    pub is_moderator: bool,
     pub is_pro: i16,
     pub is_verified: bool,
     pub email_verified: bool,
@@ -127,6 +129,7 @@ pub struct AuthUserResponse {
     pub uuid: Uuid,
     pub username: String,
     pub email: String,
+    pub phone: Option<String>,
     pub first_name: String,
     pub last_name: String,
     pub name: String,
@@ -139,9 +142,12 @@ pub struct AuthUserResponse {
     pub website: String,
     pub school: String,
     pub working: String,
+    pub working_link: String,
+    pub social_links: serde_json::Value,
     pub is_verified: bool,
     pub is_pro: i16,
     pub is_admin: bool,
+    pub is_moderator: bool,
     pub two_factor_enabled: bool,
     pub email_verified: bool,
     /// `true` if the account has a local email+password credential. OAuth-only
@@ -155,7 +161,9 @@ impl From<&User> for AuthUserResponse {
         let name = if u.first_name.is_empty() {
             u.username.clone()
         } else {
-            format!("{} {}", u.first_name, u.last_name).trim().to_string()
+            format!("{} {}", u.first_name, u.last_name)
+                .trim()
+                .to_string()
         };
 
         AuthUserResponse {
@@ -163,6 +171,7 @@ impl From<&User> for AuthUserResponse {
             uuid: u.uuid,
             username: u.username.clone(),
             email: u.email.clone(),
+            phone: u.phone_number.clone(),
             first_name: u.first_name.clone(),
             last_name: u.last_name.clone(),
             name,
@@ -175,9 +184,12 @@ impl From<&User> for AuthUserResponse {
             website: u.website.clone(),
             school: u.school.clone(),
             working: u.working.clone(),
+            working_link: u.working_link.clone(),
+            social_links: u.social_links.clone(),
             is_verified: u.is_verified,
             is_pro: u.is_pro,
             is_admin: u.is_admin,
+            is_moderator: u.is_moderator,
             two_factor_enabled: u.two_factor_enabled,
             email_verified: u.email_verified,
             has_password: u

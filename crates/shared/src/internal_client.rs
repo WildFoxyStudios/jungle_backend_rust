@@ -66,18 +66,11 @@ impl InternalClient {
         let mut circuit_breakers = HashMap::new();
 
         for (name, env_key) in services {
-            let url = std::env::var(env_key).unwrap_or_else(|_| {
-                port_defaults
-                    .get(env_key)
-                    .unwrap_or(&"")
-                    .to_string()
-            });
+            let url = std::env::var(env_key)
+                .unwrap_or_else(|_| port_defaults.get(env_key).unwrap_or(&"").to_string());
             if !url.is_empty() {
                 service_urls.insert(name.to_string(), url);
-                circuit_breakers.insert(
-                    name.to_string(),
-                    CircuitBreaker::new(5, 30),
-                );
+                circuit_breakers.insert(name.to_string(), CircuitBreaker::new(5, 30));
             }
         }
 
@@ -113,21 +106,18 @@ impl InternalClient {
     }
 
     /// Perform a GET request to an internal service endpoint.
-    pub async fn get<T: DeserializeOwned>(
-        &self,
-        service: &str,
-        path: &str,
-    ) -> Result<T, ApiError> {
+    pub async fn get<T: DeserializeOwned>(&self, service: &str, path: &str) -> Result<T, ApiError> {
         let base = self.base_url(service)?;
         let url = format!("{}{}", base, path);
 
         if let Some(cb) = self.circuit_breakers.get(service)
-            && cb.is_open() {
-                return Err(ApiError::Internal(format!(
-                    "Circuit breaker open for {}",
-                    service
-                )));
-            }
+            && cb.is_open()
+        {
+            return Err(ApiError::Internal(format!(
+                "Circuit breaker open for {}",
+                service
+            )));
+        }
 
         let result = self
             .client
@@ -171,12 +161,13 @@ impl InternalClient {
         let url = format!("{}{}", base, path);
 
         if let Some(cb) = self.circuit_breakers.get(service)
-            && cb.is_open() {
-                return Err(ApiError::Internal(format!(
-                    "Circuit breaker open for {}",
-                    service
-                )));
-            }
+            && cb.is_open()
+        {
+            return Err(ApiError::Internal(format!(
+                "Circuit breaker open for {}",
+                service
+            )));
+        }
 
         let result = self
             .client
@@ -242,11 +233,8 @@ impl InternalClient {
 
     /// Convenience: fetch a user's public profile from user-service.
     pub async fn get_user(&self, user_id: i64) -> Result<serde_json::Value, ApiError> {
-        self.get::<serde_json::Value>(
-            "user-service",
-            &format!("/internal/users/{}", user_id),
-        )
-        .await
+        self.get::<serde_json::Value>("user-service", &format!("/internal/users/{}", user_id))
+            .await
     }
 
     /// Convenience: push a message to a specific user via realtime-service.

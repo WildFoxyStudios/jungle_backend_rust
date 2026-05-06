@@ -1,0 +1,8 @@
+# Prevent STATUS_STACK_BUFFER_OVERRUN crash on Windows when compiling large test binaries
+# Rust 1.94.x can overflow the default 2MB stack during monomorphization
+[build]
+rustflags = ["-C", "link-arg=/STACK:16777216"]
+
+# Increase compiler thread stack size
+[env]
+RUST_MIN_STACK = { value = "8388608", force = true }

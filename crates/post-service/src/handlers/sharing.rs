@@ -1,9 +1,9 @@
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -60,7 +60,9 @@ pub async fn share_post(
         .execute(&state.db)
         .await?;
 
-    Ok(Json(json!({ "data": { "id": new_id, "shared_post_id": id } })))
+    Ok(Json(
+        json!({ "data": { "id": new_id, "shared_post_id": id } }),
+    ))
 }
 
 pub async fn ad_click(
@@ -69,13 +71,11 @@ pub async fn ad_click(
     Path(ad_id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
     // Record the click
-    sqlx::query(
-        "INSERT INTO ad_clicks (ad_id, user_id) VALUES ($1, $2)",
-    )
-    .bind(ad_id)
-    .bind(auth.user_id)
-    .execute(&state.db)
-    .await?;
+    sqlx::query("INSERT INTO ad_clicks (ad_id, user_id) VALUES ($1, $2)")
+        .bind(ad_id)
+        .bind(auth.user_id)
+        .execute(&state.db)
+        .await?;
 
     // Increment click count on the ad
     sqlx::query(
@@ -86,13 +86,14 @@ pub async fn ad_click(
     .await?;
 
     // Get the target id (post/page being advertised)
-    let target_id = sqlx::query_scalar::<_, Option<i64>>(
-        "SELECT target_id FROM user_ads WHERE id = $1",
-    )
-    .bind(ad_id)
-    .fetch_optional(&state.db)
-    .await?
-    .flatten();
+    let target_id =
+        sqlx::query_scalar::<_, Option<i64>>("SELECT target_id FROM user_ads WHERE id = $1")
+            .bind(ad_id)
+            .fetch_optional(&state.db)
+            .await?
+            .flatten();
 
-    Ok(Json(json!({ "data": { "clicked": true, "target_id": target_id } })))
+    Ok(Json(
+        json!({ "data": { "clicked": true, "target_id": target_id } }),
+    ))
 }

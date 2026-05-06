@@ -1,8 +1,11 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::Digest;
-use shared::{auth::AppState, errors::ApiError};
+use shared::{
+    auth::{AppState, encode_access_token},
+    errors::ApiError,
+};
 
 #[derive(Debug, Deserialize)]
 pub struct SocialLoginRequest {
@@ -63,31 +66,23 @@ pub async fn social_login(
     };
 
     // Generate tokens (same as regular login)
-    let access_exp = time::OffsetDateTime::now_utc() + time::Duration::minutes(15);
     let refresh_exp = time::OffsetDateTime::now_utc() + time::Duration::days(30);
 
-    let is_admin = sqlx::query_scalar::<_, bool>(
-        "SELECT COALESCE(is_admin, FALSE) FROM users WHERE id = $1",
+    let (user_uuid, is_admin, is_moderator) = sqlx::query_as::<_, (uuid::Uuid, bool, bool)>(
+        "SELECT uuid, is_admin, is_moderator FROM users WHERE id = $1 AND deleted_at IS NULL",
     )
     .bind(user_id)
     .fetch_one(&state.db)
     .await
-    .unwrap_or(false);
+    .map_err(|_| ApiError::Internal("User not found for token issue".into()))?;
 
-    let claims = shared::auth::Claims {
-        sub: user_id,
-        uuid: uuid::Uuid::new_v4(),
+    let access_token = encode_access_token(
+        user_id,
+        user_uuid,
         is_admin,
-        exp: access_exp.unix_timestamp(),
-        iat: time::OffsetDateTime::now_utc().unix_timestamp(),
-    };
-
-    let access_token = jsonwebtoken::encode(
-        &jsonwebtoken::Header::default(),
-        &claims,
-        &jsonwebtoken::EncodingKey::from_secret(state.config.jwt_secret.as_bytes()),
-    )
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
+        is_moderator,
+        &state.config.jwt_secret,
+    )?;
 
     let refresh_token = uuid::Uuid::new_v4().to_string();
     let token_hash = format!("{:x}", sha2::Sha256::digest(refresh_token.as_bytes()));
@@ -168,12 +163,11 @@ async fn generate_unique_username(state: &AppState, name: &str) -> Result<String
             format!("{}_{}", base, i)
         };
 
-        let exists = sqlx::query_scalar::<_, bool>(
-            "SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)",
-        )
-        .bind(&candidate)
-        .fetch_one(&state.db)
-        .await?;
+        let exists =
+            sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE username = $1)")
+                .bind(&candidate)
+                .fetch_one(&state.db)
+                .await?;
 
         if !exists {
             return Ok(candidate);
@@ -328,7 +322,10 @@ async fn fetch_social_user(provider: &str, token: &str) -> Result<SocialUser, Ap
             Ok(SocialUser {
                 id: user["open_id"].as_str().unwrap_or_default().to_string(),
                 email: String::new(),
-                first_name: user["display_name"].as_str().unwrap_or_default().to_string(),
+                first_name: user["display_name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
                 last_name: String::new(),
                 avatar: user["avatar_url"].as_str().map(String::from),
             })
@@ -477,9 +474,105 @@ async fn fetch_social_user(provider: &str, token: &str) -> Result<SocialUser, Ap
             Ok(SocialUser {
                 id: resp["ID"].to_string(),
                 email: resp["email"].as_str().unwrap_or_default().to_string(),
-                first_name: resp["display_name"].as_str().unwrap_or_default().to_string(),
+                first_name: resp["display_name"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .to_string(),
                 last_name: String::new(),
                 avatar: resp["avatar_URL"].as_str().map(String::from),
+            })
+        }
+
+        // ── Developer-oriented providers ──
+        "github" => {
+            // GitHub requires a User-Agent header. The /user endpoint
+            // returns the profile; emails are returned by /user/emails
+            // when the `user:email` scope is granted.
+            let user: Value = client
+                .get("https://api.github.com/user")
+                .bearer_auth(token)
+                .header("User-Agent", "wowonder-auth-service")
+                .send()
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?
+                .json()
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+            let mut email = user["email"].as_str().unwrap_or_default().to_string();
+            if email.is_empty()
+                && let Ok(emails) = client
+                    .get("https://api.github.com/user/emails")
+                    .bearer_auth(token)
+                    .header("User-Agent", "wowonder-auth-service")
+                    .send()
+                    .await
+                    .map_err(|e| ApiError::Internal(e.to_string()))?
+                    .json::<Vec<Value>>()
+                    .await
+                && let Some(primary) = emails
+                    .iter()
+                    .find(|e| {
+                        e["primary"].as_bool().unwrap_or(false)
+                            && e["verified"].as_bool().unwrap_or(false)
+                    })
+                    .or_else(|| {
+                        emails
+                            .iter()
+                            .find(|e| e["verified"].as_bool().unwrap_or(false))
+                    })
+            {
+                email = primary["email"].as_str().unwrap_or_default().to_string();
+            }
+
+            // GitHub `name` is a single field – split into first/last on the
+            // first whitespace; fall back to login when absent.
+            let display = user["name"]
+                .as_str()
+                .filter(|s| !s.is_empty())
+                .or(user["login"].as_str())
+                .unwrap_or_default()
+                .to_string();
+            let (first_name, last_name) = match display.split_once(' ') {
+                Some((f, l)) => (f.to_string(), l.to_string()),
+                None => (display, String::new()),
+            };
+
+            Ok(SocialUser {
+                id: user["id"].to_string(),
+                email,
+                first_name,
+                last_name,
+                avatar: user["avatar_url"].as_str().map(String::from),
+            })
+        }
+
+        // ── Microsoft (work/school/personal) ──
+        "microsoft" => {
+            // Microsoft Graph /me endpoint covers both AAD and personal
+            // accounts when authenticated with `User.Read` consent.
+            let user: Value = client
+                .get("https://graph.microsoft.com/v1.0/me")
+                .bearer_auth(token)
+                .send()
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?
+                .json()
+                .await
+                .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+            let email = user["mail"]
+                .as_str()
+                .or(user["userPrincipalName"].as_str())
+                .unwrap_or_default()
+                .to_string();
+
+            Ok(SocialUser {
+                id: user["id"].as_str().unwrap_or_default().to_string(),
+                email,
+                first_name: user["givenName"].as_str().unwrap_or_default().to_string(),
+                last_name: user["surname"].as_str().unwrap_or_default().to_string(),
+                avatar: None,
             })
         }
 
@@ -510,12 +603,14 @@ struct AppleJwk {
 
 async fn verify_apple_identity_token(token: &str) -> Result<Value, ApiError> {
     use base64::Engine;
-    use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+    use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 
     // 1. Decode header to get "kid"
     let header = jsonwebtoken::decode_header(token)
         .map_err(|e| ApiError::BadRequest(format!("Invalid Apple token header: {}", e)))?;
-    let kid = header.kid.ok_or_else(|| ApiError::BadRequest("Apple token missing kid".into()))?;
+    let kid = header
+        .kid
+        .ok_or_else(|| ApiError::BadRequest("Apple token missing kid".into()))?;
 
     // 2. Fetch Apple's public keys
     let jwks: AppleJwks = reqwest::get("https://appleid.apple.com/auth/keys")

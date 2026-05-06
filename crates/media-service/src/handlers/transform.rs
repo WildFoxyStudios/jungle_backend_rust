@@ -7,12 +7,12 @@
 //! `updated_at` timestamp returned to the caller).
 
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use image::{GenericImageView, ImageFormat};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -186,11 +186,7 @@ pub async fn crop_image(
 // Helpers
 // ═══════════════════════════════════════════════════════════════════
 
-async fn load_own_image(
-    state: &AppState,
-    id: i64,
-    user_id: i64,
-) -> Result<MediaRow, ApiError> {
+async fn load_own_image(state: &AppState, id: i64, user_id: i64) -> Result<MediaRow, ApiError> {
     let media = sqlx::query_as::<_, MediaRow>(
         "SELECT id, user_id, file_url, file_type, file_name, file_size, mime_type,
                 width, height, duration, thumbnail_url, created_at
@@ -238,7 +234,10 @@ fn split_key(file_url: &str) -> Result<(String, String), ApiError> {
     )))
 }
 
-fn encode_same_format(img: &image::DynamicImage, mime: &str) -> Result<(Vec<u8>, String), ApiError> {
+fn encode_same_format(
+    img: &image::DynamicImage,
+    mime: &str,
+) -> Result<(Vec<u8>, String), ApiError> {
     let (format, out_mime) = match mime {
         "image/png" => (ImageFormat::Png, "image/png"),
         "image/gif" => (ImageFormat::Png, "image/png"), // re-encode animated gifs as static png after transform

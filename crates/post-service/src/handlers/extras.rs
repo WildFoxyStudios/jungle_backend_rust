@@ -1,15 +1,17 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
+    models::user::PublicUserRow,
     pagination::PaginationParams,
 };
 use sqlx::FromRow;
+use std::collections::HashMap;
 
 use super::posts::PostRow;
 
@@ -28,13 +30,11 @@ pub async fn vote_poll(
     Json(req): Json<PollVoteRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Verify that the post exists and has a poll
-    let poll = sqlx::query_as::<_, (i64,)>(
-        "SELECT id FROM polls WHERE post_id = $1",
-    )
-    .bind(post_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound("Poll not found for this post".into()))?;
+    let poll = sqlx::query_as::<_, (i64,)>("SELECT id FROM polls WHERE post_id = $1")
+        .bind(post_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound("Poll not found for this post".into()))?;
 
     let poll_id = poll.0;
 
@@ -48,17 +48,17 @@ pub async fn vote_poll(
     .await?;
 
     if existing.is_some() {
-        return Err(ApiError::BadRequest("You already voted on this poll".into()));
+        return Err(ApiError::BadRequest(
+            "You already voted on this poll".into(),
+        ));
     }
 
-    sqlx::query(
-        "INSERT INTO poll_votes (poll_id, user_id, option_index) VALUES ($1, $2, $3)",
-    )
-    .bind(poll_id)
-    .bind(auth.user_id)
-    .bind(req.option_index)
-    .execute(&state.db)
-    .await?;
+    sqlx::query("INSERT INTO poll_votes (poll_id, user_id, option_index) VALUES ($1, $2, $3)")
+        .bind(poll_id)
+        .bind(auth.user_id)
+        .bind(req.option_index)
+        .execute(&state.db)
+        .await?;
 
     // Return updated vote counts
     let votes = sqlx::query_as::<_, (i32, i64)>(
@@ -73,7 +73,9 @@ pub async fn vote_poll(
         .map(|(idx, cnt)| json!({ "option_index": idx, "count": cnt }))
         .collect();
 
-    Ok(Json(json!({ "data": { "voted": req.option_index, "results": vote_counts } })))
+    Ok(Json(
+        json!({ "data": { "voted": req.option_index, "results": vote_counts } }),
+    ))
 }
 
 // ── Pin Post ───────────────────────────────────────────────────────
@@ -129,15 +131,15 @@ pub async fn boost_post(
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Verify user is pro
-    let is_pro = sqlx::query_scalar::<_, i32>(
-        "SELECT is_pro FROM users WHERE id = $1",
-    )
-    .bind(auth.user_id)
-    .fetch_one(&state.db)
-    .await?;
+    let is_pro = sqlx::query_scalar::<_, i32>("SELECT is_pro FROM users WHERE id = $1")
+        .bind(auth.user_id)
+        .fetch_one(&state.db)
+        .await?;
 
     if is_pro == 0 {
-        return Err(ApiError::Forbidden("Pro subscription required to boost posts".into()));
+        return Err(ApiError::Forbidden(
+            "Pro subscription required to boost posts".into(),
+        ));
     }
 
     let result = sqlx::query(
@@ -203,7 +205,9 @@ pub async fn report_post(
     .await?;
 
     if existing.is_some() {
-        return Err(ApiError::BadRequest("You already reported this post".into()));
+        return Err(ApiError::BadRequest(
+            "You already reported this post".into(),
+        ));
     }
 
     sqlx::query(
@@ -255,8 +259,57 @@ pub async fn explore_feed(
     let data: Vec<_> = posts.into_iter().take(limit as usize).collect();
     let next_cursor = data.last().map(|p| p.id.to_string());
 
+    let user_ids: Vec<i64> = data
+        .iter()
+        .map(|p| p.user_id)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
+    let publishers: HashMap<i64, PublicUserRow> = if !user_ids.is_empty() {
+        let rows = sqlx::query_as::<_, PublicUserRow>(
+            r#"SELECT uuid, username, first_name, last_name, avatar, cover, about, is_verified, is_pro
+               FROM users WHERE id = ANY($1)"#,
+        )
+        .bind(&user_ids)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+
+        let id_rows: Vec<(i64, String)> =
+            sqlx::query_as("SELECT id, username FROM users WHERE id = ANY($1)")
+                .bind(&user_ids)
+                .fetch_all(&state.db)
+                .await
+                .unwrap_or_default();
+
+        let username_map: HashMap<String, PublicUserRow> =
+            rows.into_iter().map(|r| (r.username.clone(), r)).collect();
+        id_rows
+            .into_iter()
+            .filter_map(|(id, uname)| username_map.get(&uname).cloned().map(|p| (id, p)))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+
+    let result: Vec<serde_json::Value> = data
+        .iter()
+        .map(|post| {
+            let mut val = serde_json::to_value(post).unwrap_or_default();
+            if let Some(obj) = val.as_object_mut()
+                && let Some(pub_row) = publishers.get(&post.user_id)
+            {
+                obj.insert(
+                    "publisher".into(),
+                    serde_json::to_value(pub_row).unwrap_or_default(),
+                );
+            }
+            val
+        })
+        .collect();
+
     Ok(Json(json!({
-        "data": data,
+        "data": result,
         "meta": { "cursor": next_cursor, "has_more": has_more }
     })))
 }
@@ -305,13 +358,11 @@ pub async fn create_reply(
     Json(req): Json<CreateReplyRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     // Get the parent comment's post_id
-    let parent = sqlx::query_as::<_, (i64,)>(
-        "SELECT post_id FROM comments WHERE id = $1",
-    )
-    .bind(parent_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound("Parent comment not found".into()))?;
+    let parent = sqlx::query_as::<_, (i64,)>("SELECT post_id FROM comments WHERE id = $1")
+        .bind(parent_id)
+        .fetch_optional(&state.db)
+        .await?
+        .ok_or(ApiError::NotFound("Parent comment not found".into()))?;
 
     let media = req.media.unwrap_or(json!([]));
 
@@ -468,7 +519,9 @@ pub async fn most_liked_posts(
     let has_more = rows.len() as i64 > limit;
     let data: Vec<_> = rows.into_iter().take(limit as usize).collect();
     let next_cursor = data.last().map(|r| r.id.to_string());
-    Ok(Json(json!({ "data": data, "meta": { "cursor": next_cursor, "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": data, "meta": { "cursor": next_cursor, "has_more": has_more } }),
+    ))
 }
 
 /// GET /v1/posts/most-watched — trending video posts by view count
@@ -494,7 +547,9 @@ pub async fn most_watched_posts(
     let has_more = rows.len() as i64 > limit;
     let data: Vec<_> = rows.into_iter().take(limit as usize).collect();
     let next_cursor = data.last().map(|r| r.id.to_string());
-    Ok(Json(json!({ "data": data, "meta": { "cursor": next_cursor, "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": data, "meta": { "cursor": next_cursor, "has_more": has_more } }),
+    ))
 }
 
 /// GET /v1/posts/reaction-types — list active reaction types (public)
@@ -520,48 +575,83 @@ pub async fn open_to_work_feed(
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
     let limit = params.limit();
-    let cursor = params.cursor_id();
+    let cursor_id = params.cursor_id().unwrap_or(i64::MAX);
 
-    type Row = (i64, i64, String, Option<String>, Option<String>, String, Option<String>, time::OffsetDateTime);
-    let rows: Vec<Row> = sqlx::query_as(
-        r#"SELECT p.id, p.user_id, u.username, u.first_name, u.last_name,
-                  COALESCE(p.text, ''), u.avatar, p.created_at
-             FROM posts p
-             JOIN users u ON u.id = p.user_id
-            WHERE p.post_type = 'open_to_work'
-              AND p.deleted_at IS NULL
-              AND p.published_at IS NOT NULL
-              AND ($1::bigint IS NULL OR p.id < $1)
-         ORDER BY p.id DESC
-            LIMIT $2"#,
+    let posts = sqlx::query_as::<_, PostRow>(
+        r#"SELECT id, uuid, user_id, parent_id, content, post_type, media,
+                  privacy, feeling, location, is_pinned, is_boosted, is_reel,
+                  like_count, comment_count, share_count, view_count,
+                  created_at, updated_at
+           FROM posts
+           WHERE deleted_at IS NULL
+             AND is_approved = TRUE
+             AND post_type = 'open_to_work'
+             AND (published_at IS NULL OR published_at <= NOW())
+             AND privacy = 'everyone'
+             AND id < $1
+           ORDER BY id DESC
+           LIMIT $2"#,
     )
-    .bind(cursor)
+    .bind(cursor_id)
     .bind(limit + 1)
     .fetch_all(&state.db)
     .await?;
 
-    let has_more = rows.len() as i64 > limit;
-    let rows: Vec<Row> = rows.into_iter().take(limit as usize).collect();
-    let next_cursor = rows.last().map(|r| r.0);
+    let has_more = posts.len() as i64 > limit;
+    let data: Vec<_> = posts.into_iter().take(limit as usize).collect();
+    let next_cursor = data.last().map(|p| p.id.to_string());
 
-    let data: Vec<Value> = rows
+    let user_ids: Vec<i64> = data
+        .iter()
+        .map(|p| p.user_id)
+        .collect::<std::collections::HashSet<_>>()
         .into_iter()
-        .map(|(id, uid, username, fn_, ln, text, avatar, created)| {
-            json!({
-                "id": id,
-                "user_id": uid,
-                "username": username,
-                "first_name": fn_,
-                "last_name": ln,
-                "text": text,
-                "avatar": avatar,
-                "created_at": created.to_string(),
-            })
+        .collect();
+    let publishers: HashMap<i64, PublicUserRow> = if !user_ids.is_empty() {
+        let rows = sqlx::query_as::<_, PublicUserRow>(
+            r#"SELECT uuid, username, first_name, last_name, avatar, cover, about, is_verified, is_pro
+               FROM users WHERE id = ANY($1)"#,
+        )
+        .bind(&user_ids)
+        .fetch_all(&state.db)
+        .await
+        .unwrap_or_default();
+
+        let id_rows: Vec<(i64, String)> =
+            sqlx::query_as("SELECT id, username FROM users WHERE id = ANY($1)")
+                .bind(&user_ids)
+                .fetch_all(&state.db)
+                .await
+                .unwrap_or_default();
+
+        let username_map: HashMap<String, PublicUserRow> =
+            rows.into_iter().map(|r| (r.username.clone(), r)).collect();
+        id_rows
+            .into_iter()
+            .filter_map(|(id, uname)| username_map.get(&uname).cloned().map(|p| (id, p)))
+            .collect()
+    } else {
+        HashMap::new()
+    };
+
+    let result: Vec<Value> = data
+        .iter()
+        .map(|post| {
+            let mut val = serde_json::to_value(post).unwrap_or_default();
+            if let Some(obj) = val.as_object_mut()
+                && let Some(pub_row) = publishers.get(&post.user_id)
+            {
+                obj.insert(
+                    "publisher".into(),
+                    serde_json::to_value(pub_row).unwrap_or_default(),
+                );
+            }
+            val
         })
         .collect();
 
     Ok(Json(json!({
-        "data": data,
-        "meta": { "has_more": has_more, "next_cursor": next_cursor }
+        "data": result,
+        "meta": { "cursor": next_cursor, "has_more": has_more }
     })))
 }

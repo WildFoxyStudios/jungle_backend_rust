@@ -1,16 +1,16 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
     events::DomainEvent,
     pagination::PaginationParams,
 };
-use sqlx::FromRow;
+use sqlx::{FromRow, Row};
 use time::OffsetDateTime;
 use validator::Validate;
 
@@ -158,10 +158,12 @@ pub async fn get_group(
             .fetch_optional(&state.db)
             .await?
     } else {
-        sqlx::query_as::<_, GroupRow>("SELECT * FROM groups WHERE group_name = $1 AND active = TRUE")
-            .bind(&id)
-            .fetch_optional(&state.db)
-            .await?
+        sqlx::query_as::<_, GroupRow>(
+            "SELECT * FROM groups WHERE group_name = $1 AND active = TRUE",
+        )
+        .bind(&id)
+        .fetch_optional(&state.db)
+        .await?
     };
     let group = group.ok_or_else(|| ApiError::NotFound("Group not found".into()))?;
 
@@ -229,13 +231,18 @@ pub async fn join_group(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    let group = sqlx::query_as::<_, GroupRow>("SELECT * FROM groups WHERE id = $1 AND active = TRUE")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| ApiError::NotFound("Group not found".into()))?;
+    let group =
+        sqlx::query_as::<_, GroupRow>("SELECT * FROM groups WHERE id = $1 AND active = TRUE")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| ApiError::NotFound("Group not found".into()))?;
 
-    let status = if group.join_privacy == "open" { "active" } else { "pending" };
+    let status = if group.join_privacy == "open" {
+        "active"
+    } else {
+        "pending"
+    };
 
     sqlx::query(
         "INSERT INTO group_members (group_id, user_id, role, status) VALUES ($1, $2, 'member', $3) ON CONFLICT (group_id, user_id) DO UPDATE SET status = $3",
@@ -252,10 +259,13 @@ pub async fn join_group(
             .execute(&state.db)
             .await?;
 
-        let _ = state.event_bus.publish(&DomainEvent::GroupJoined {
-            group_id: id,
-            user_id: auth.user_id,
-        }).await;
+        let _ = state
+            .event_bus
+            .publish(&DomainEvent::GroupJoined {
+                group_id: id,
+                user_id: auth.user_id,
+            })
+            .await;
     }
 
     Ok(Json(json!({ "data": { "status": status } })))
@@ -276,7 +286,9 @@ pub async fn leave_group(
     .await?;
 
     if role.as_deref() == Some("owner") {
-        return Err(ApiError::BadRequest("Owner cannot leave. Transfer ownership first.".into()));
+        return Err(ApiError::BadRequest(
+            "Owner cannot leave. Transfer ownership first.".into(),
+        ));
     }
 
     sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2")
@@ -290,10 +302,13 @@ pub async fn leave_group(
         .execute(&state.db)
         .await?;
 
-    let _ = state.event_bus.publish(&DomainEvent::GroupLeft {
-        group_id: id,
-        user_id: auth.user_id,
-    }).await;
+    let _ = state
+        .event_bus
+        .publish(&DomainEvent::GroupLeft {
+            group_id: id,
+            user_id: auth.user_id,
+        })
+        .await;
 
     Ok(Json(json!({ "data": { "left": true } })))
 }
@@ -324,7 +339,9 @@ pub async fn list_members(
     let has_more = members.len() as i64 > limit;
     let members: Vec<_> = members.into_iter().take(limit as usize).collect();
 
-    Ok(Json(json!({ "data": members, "meta": { "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": members, "meta": { "has_more": has_more } }),
+    ))
 }
 
 pub async fn kick_member(
@@ -334,11 +351,13 @@ pub async fn kick_member(
 ) -> Result<Json<Value>, ApiError> {
     verify_group_admin(&state, id, auth.user_id).await?;
 
-    sqlx::query("DELETE FROM group_members WHERE group_id = $1 AND user_id = $2 AND role = 'member'")
-        .bind(id)
-        .bind(uid)
-        .execute(&state.db)
-        .await?;
+    sqlx::query(
+        "DELETE FROM group_members WHERE group_id = $1 AND user_id = $2 AND role = 'member'",
+    )
+    .bind(id)
+    .bind(uid)
+    .execute(&state.db)
+    .await?;
 
     sqlx::query("UPDATE groups SET member_count = (SELECT COUNT(*) FROM group_members WHERE group_id = $1 AND status = 'active') WHERE id = $1")
         .bind(id)
@@ -430,9 +449,7 @@ pub async fn reject_join(
     Ok(Json(json!({ "data": { "rejected": true } })))
 }
 
-pub async fn list_categories(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, ApiError> {
+pub async fn list_categories(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let cats = sqlx::query_as::<_, CategoryRow>(
         "SELECT id, name_key, slug, parent_id FROM categories WHERE type = 'group' AND active = TRUE ORDER BY sort_order",
     )
@@ -528,4 +545,100 @@ async fn verify_group_admin(state: &AppState, group_id: i64, user_id: i64) -> Re
         return Err(ApiError::Forbidden("".into()));
     }
     Ok(())
+}
+
+// ─── Group Rules ─────────────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+pub struct CreateRuleRequest {
+    pub title: String,
+    pub description: Option<String>,
+}
+
+// GET /v1/groups/{id}/rules
+pub async fn list_group_rules(
+    State(state): State<AppState>,
+    Path(group_id): Path<i64>,
+) -> Result<Json<Vec<serde_json::Value>>, ApiError> {
+    let rows = sqlx::query(
+        "SELECT id, title, description, sort_order FROM group_rules WHERE group_id = $1 ORDER BY sort_order"
+    )
+    .bind(group_id)
+    .fetch_all(&state.db).await
+    .map_err(|e| { tracing::error!(error = %e); ApiError::Internal("DB error".into()) })?;
+
+    let rules: Vec<serde_json::Value> = rows.iter().map(|r| serde_json::json!({
+        "id": r.get::<i64, _>("id"),
+        "title": r.get::<String, _>("title"),
+        "description": r.get::<Option<String>, _>("description"),
+        "sort_order": r.get::<i32, _>("sort_order"),
+    })).collect();
+    Ok(Json(rules))
+}
+
+// POST /v1/groups/{id}/rules
+pub async fn create_group_rule(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(group_id): Path<i64>,
+    Json(body): Json<CreateRuleRequest>,
+) -> Result<Json<serde_json::Value>, ApiError> {
+    // Verify user is group admin or owner
+    let membership = sqlx::query(
+        "SELECT role FROM group_members WHERE group_id = $1 AND user_id = $2"
+    )
+    .bind(group_id).bind(auth.user_id)
+    .fetch_optional(&state.db).await
+    .map_err(|e| { tracing::error!(error = %e); ApiError::Internal("DB error".into()) })?;
+
+    match membership {
+        Some(row) => {
+            let role: String = row.get("role");
+            if role != "admin" && role != "owner" {
+                return Err(ApiError::Forbidden("Only group admins can manage rules".into()));
+            }
+        }
+        None => return Err(ApiError::Forbidden("You are not a member of this group".into())),
+    }
+
+    let row = sqlx::query(
+        "INSERT INTO group_rules (group_id, title, description, sort_order) VALUES ($1, $2, $3, (SELECT COALESCE(MAX(sort_order), 0) + 1 FROM group_rules WHERE group_id = $1)) RETURNING id"
+    )
+    .bind(group_id).bind(&body.title).bind(&body.description)
+    .fetch_one(&state.db).await
+    .map_err(|e| { tracing::error!(error = %e); ApiError::Internal("DB error".into()) })?;
+
+    let id: i64 = row.get("id");
+    Ok(Json(serde_json::json!({ "id": id, "title": body.title })))
+}
+
+// DELETE /v1/groups/{gid}/rules/{rid}
+pub async fn delete_group_rule(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path((group_id, rule_id)): Path<(i64, i64)>,
+) -> Result<Json<()>, ApiError> {
+    // Verify user is group admin or owner
+    let membership = sqlx::query(
+        "SELECT role FROM group_members WHERE group_id = $1 AND user_id = $2"
+    )
+    .bind(group_id).bind(auth.user_id)
+    .fetch_optional(&state.db).await
+    .map_err(|e| { tracing::error!(error = %e); ApiError::Internal("DB error".into()) })?;
+
+    match membership {
+        Some(row) => {
+            let role: String = row.get("role");
+            if role != "admin" && role != "owner" {
+                return Err(ApiError::Forbidden("Only group admins can manage rules".into()));
+            }
+        }
+        None => return Err(ApiError::Forbidden("You are not a member of this group".into())),
+    }
+
+    sqlx::query("DELETE FROM group_rules WHERE id = $1 AND group_id = $2")
+        .bind(rule_id).bind(group_id)
+        .execute(&state.db).await
+        .map_err(|e| { tracing::error!(error = %e); ApiError::Internal("DB error".into()) })?;
+    Ok(Json(()))
 }

@@ -1,13 +1,50 @@
 x-common-env: &common-env
-  DATABASE_URL: postgres://Jungle:${DB_PASSWORD:-Jungle_dev_123}@postgres:5432/Jungle
-  REDIS_URL: redis://redis:6379
-  JWT_SECRET: ${JWT_SECRET:-super_secret_jwt_key_change_me}
-  JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-super_secret_refresh_key_change_me}
+  # Use external DB (e.g. Neon) from backend/.env
+  DATABASE_URL: ${DATABASE_URL}
+  # Migrations are applied explicitly via `sqlx migrate run`.
+  # Keep service startup fast/stable with Neon connection pooling.
+  SKIP_DB_MIGRATIONS: "true"
+  # Use external Redis from .env if set, otherwise local container
+  REDIS_URL: ${REDIS_URL:-redis://redis:6379}
+  JWT_SECRET: ${JWT_SECRET}
+  JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET}
+  INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY}
   FRONTEND_URL: ${FRONTEND_URL:-http://localhost:3000}
   ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-http://localhost:3000,http://localhost:3001}
   NATS_URL: nats://nats:4222
   RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
   SQLX_OFFLINE: "true"
+  # External APIs (from .env)
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+  OPENAI_MODERATION_MODEL: ${OPENAI_MODERATION_MODEL:-omni-moderation-latest}
+  OCR_SPACE_API_KEY: ${OCR_SPACE_API_KEY:-}
+  CLOUDFLARE_ACCOUNT_ID: ${CLOUDFLARE_ACCOUNT_ID:-}
+  CLOUDFLARE_AI_TOKEN: ${CLOUDFLARE_AI_TOKEN:-}
+  CLOUDFLARE_AI_WHISPER_MODEL: ${CLOUDFLARE_AI_WHISPER_MODEL:-@cf/openai/whisper}
+  # Email
+  SMTP_HOST: ${SMTP_HOST:-}
+  SMTP_PORT: ${SMTP_PORT:-587}
+  SMTP_USERNAME: ${SMTP_USERNAME:-}
+  SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+  SMTP_ENCRYPTION: ${SMTP_ENCRYPTION:-starttls}
+  SMTP_FROM_EMAIL: ${SMTP_FROM_EMAIL:-noreply@jungle.com}
+  SMTP_FROM_NAME: ${SMTP_FROM_NAME:-Jungle}
+  # Web Push
+  VAPID_PRIVATE_KEY: ${VAPID_PRIVATE_KEY:-}
+  VAPID_PUBLIC_KEY: ${VAPID_PUBLIC_KEY:-}
+  VAPID_SUBJECT: ${VAPID_SUBJECT:-mailto:admin@jungle.com}
+  # Anti-abuse
+  TURNSTILE_SECRET_KEY: ${TURNSTILE_SECRET_KEY:-}
+  # Payments
+  STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+  # Storage (R2 for prod, minio for local dev)
+  STORAGE_PROVIDER: ${STORAGE_PROVIDER:-r2}
+  S3_ENDPOINT: ${S3_ENDPOINT:-https://89ae9dc46bb0bd6c1686a28cefed9a9d.r2.cloudflarestorage.com}
+  S3_BUCKET: ${S3_BUCKET:-jungle}
+  S3_REGION: ${S3_REGION:-auto}
+  S3_ACCESS_KEY: ${S3_ACCESS_KEY:-0f0d97ce565572653b26309c5d4dcd20}
+  S3_SECRET_KEY: ${S3_SECRET_KEY:-1775cf3b88e518f4324779f18b35dd10b24f85cca356a97c5c4e4b806ff965b0}
+  S3_PUBLIC_URL: ${S3_PUBLIC_URL:-https://pub-72b1819b1e104dde8013bd70857419f8.r2.dev}
 
 x-service-defaults: &service-defaults
   build:
@@ -15,15 +52,14 @@ x-service-defaults: &service-defaults
     dockerfile: Dockerfile
   restart: unless-stopped
   depends_on:
-    postgres:
-      condition: service_healthy
-    redis:
+    nats:
       condition: service_healthy
 
 services:
   # ── Infrastructure ─────────────────────────────────────────────────────────
   postgres:
     image: postgres:16-alpine
+    profiles: ["dev"]
     environment:
       POSTGRES_DB: Jungle
       POSTGRES_USER: Jungle
@@ -39,9 +75,11 @@ services:
       retries: 5
 
   redis:
+    # Local Redis for development only — production uses REDIS_URL env var (Redis Cloud)
     image: redis:7-alpine
     ports:
       - "6379:6379"
+    profiles: ["dev"]  # Only start with: docker compose --profile dev up
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -52,7 +90,7 @@ services:
     image: nats:2-alpine
     ports:
       - "4222:4222"
-      - "8222:8222"
+    # NATS monitoring (8222) is internal-only — never exposed to host
     command: ["--js", "--sd", "/data", "--http_port", "8222"]
     volumes:
       - natsdata:/data
@@ -64,6 +102,7 @@ services:
 
   minio:
     image: minio/minio
+    profiles: ["dev"]
     command: server /data --console-address ":9001"
     environment:
       MINIO_ROOT_USER: minioadmin
@@ -96,6 +135,7 @@ services:
       PAYMENT_SERVICE_URL: http://payment-service:3011
       REALTIME_SERVICE_URL: http://realtime-service:3012
       AI_SERVICE_URL: http://ai-service:3013
+      LIVE_SERVICE_URL: http://live-service:3014
 
   # ── Microservices ──────────────────────────────────────────────────────────
   auth-service:
@@ -132,13 +172,6 @@ services:
     environment:
       <<: *common-env
       SERVER_PORT: "3005"
-      STORAGE_PROVIDER: minio
-      S3_ENDPOINT: http://minio:9000
-      S3_BUCKET: jungle
-      S3_REGION: auto
-      S3_ACCESS_KEY: minioadmin
-      S3_SECRET_KEY: ${MINIO_PASSWORD:-minioadmin123}
-      S3_PUBLIC_URL: http://localhost:9000/jungle
 
   notification-service:
     <<: *service-defaults
@@ -189,6 +222,8 @@ services:
   realtime-service:
     <<: *service-defaults
     command: ["realtime-service"]
+    ports:
+      - "${REALTIME_PORT:-3012}:3012"
     environment:
       <<: *common-env
       SERVER_PORT: "3012"
@@ -208,6 +243,13 @@ services:
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-1.5-flash}
       GEMINI_IMAGE_MODEL: ${GEMINI_IMAGE_MODEL:-imagen-3.0-generate-001}
       INTERNAL_SERVICE_KEY: ${INTERNAL_SERVICE_KEY:-change-me-internal-key}
+
+  live-service:
+    <<: *service-defaults
+    command: ["live-service"]
+    environment:
+      <<: *common-env
+      SERVER_PORT: "3014"
 
   # ── Background Jobs ────────────────────────────────────────────────────────
   jobs-runner:

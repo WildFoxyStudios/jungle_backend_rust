@@ -15,6 +15,7 @@ pub struct AppConfig {
     pub server_port: u16,
     pub frontend_url: String,
     pub allowed_origins: Vec<String>,
+    pub openai_api_key: Option<String>,
 }
 
 impl AppConfig {
@@ -22,21 +23,20 @@ impl AppConfig {
         dotenvy::dotenv().ok();
 
         Self {
-            database_url: std::env::var("DATABASE_URL")
-                .expect("DATABASE_URL must be set"),
+            database_url: std::env::var("DATABASE_URL").expect("DATABASE_URL must be set"),
             redis_url: std::env::var("REDIS_URL")
                 .unwrap_or_else(|_| "redis://127.0.0.1:6379".into()),
-            nats_url: std::env::var("NATS_URL")
-                .unwrap_or_else(|_| "nats://127.0.0.1:4222".into()),
-            jwt_secret: std::env::var("JWT_SECRET")
-                .expect("JWT_SECRET must be set"),
+            nats_url: std::env::var("NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".into()),
+            jwt_secret: std::env::var("JWT_SECRET").expect("JWT_SECRET must be set"),
             jwt_secret_previous: std::env::var("JWT_SECRET_PREVIOUS")
                 .ok()
                 .filter(|s| !s.is_empty()),
             jwt_refresh_secret: std::env::var("JWT_REFRESH_SECRET")
-                .unwrap_or_else(|_| std::env::var("JWT_SECRET").unwrap()),
-            server_host: std::env::var("SERVER_HOST")
-                .unwrap_or_else(|_| "0.0.0.0".into()),
+                .unwrap_or_else(|_| std::env::var("JWT_SECRET").unwrap_or_else(|_| {
+                    tracing::error!("JWT_REFRESH_SECRET not set and JWT_SECRET fallback unavailable");
+                    std::process::exit(1);
+                })),
+            server_host: std::env::var("SERVER_HOST").unwrap_or_else(|_| "0.0.0.0".into()),
             server_port: std::env::var("SERVER_PORT")
                 .unwrap_or_else(|_| "3000".into())
                 .parse()
@@ -48,6 +48,7 @@ impl AppConfig {
                 .split(',')
                 .map(|s| s.trim().to_string())
                 .collect(),
+            openai_api_key: std::env::var("OPENAI_API_KEY").ok(),
         }
     }
 

@@ -1,9 +1,9 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -45,7 +45,7 @@ pub async fn list_cart(
         r#"SELECT c.id, c.user_id, c.product_id, c.units,
                   COALESCE(p.name, '') AS product_name,
                   COALESCE(p.price, 0) AS product_price,
-                  COALESCE(p.images->0->>'url', '') AS product_image,
+                  COALESCE(p.media->0->>'url', '') AS product_image,
                   c.created_at
            FROM shopping_cart c
            LEFT JOIN products p ON p.id = c.product_id
@@ -91,7 +91,7 @@ pub async fn add_to_cart(
 
     // Verify product exists
     let exists: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM products WHERE id = $1 AND deleted_at IS NULL)",
+        "SELECT EXISTS(SELECT 1 FROM products WHERE id = $1 AND status = 'active')",
     )
     .bind(req.product_id)
     .fetch_one(&state.db)
@@ -133,14 +133,12 @@ pub async fn update_cart_item(
         return Err(ApiError::BadRequest("units must be at least 1".into()));
     }
 
-    let result = sqlx::query(
-        "UPDATE shopping_cart SET units = $3 WHERE id = $1 AND user_id = $2",
-    )
-    .bind(id)
-    .bind(auth.user_id)
-    .bind(req.units)
-    .execute(&state.db)
-    .await?;
+    let result = sqlx::query("UPDATE shopping_cart SET units = $3 WHERE id = $1 AND user_id = $2")
+        .bind(id)
+        .bind(auth.user_id)
+        .bind(req.units)
+        .execute(&state.db)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound("Cart item not found".into()));
@@ -178,5 +176,7 @@ pub async fn clear_cart(
         .execute(&state.db)
         .await?;
 
-    Ok(Json(json!({ "data": { "cleared": result.rows_affected() } })))
+    Ok(Json(
+        json!({ "data": { "cleared": result.rows_affected() } }),
+    ))
 }

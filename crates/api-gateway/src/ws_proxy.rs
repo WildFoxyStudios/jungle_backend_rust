@@ -1,14 +1,20 @@
+use crate::proxy::GatewayState;
 use axum::{
-    extract::{ws::WebSocket, Query, State, WebSocketUpgrade},
+    extract::{Query, State, WebSocketUpgrade, ws::WebSocket},
     response::{IntoResponse, Response},
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
-use crate::proxy::GatewayState;
 
 #[derive(Deserialize)]
 pub struct WsQuery {
     pub token: String,
+}
+
+#[derive(Deserialize)]
+pub struct WsLiveNativeQuery {
+    pub token: String,
+    pub room_id: String,
 }
 
 pub async fn ws_proxy_handler(
@@ -28,6 +34,33 @@ pub async fn ws_proxy_handler(
         .replace("http://", "ws://")
         .replace("https://", "wss://");
     let upstream_url = format!("{}/ws?token={}", ws_base, query.token);
+
+    ws.on_upgrade(move |socket| bridge_websocket(socket, upstream_url))
+}
+
+pub async fn ws_live_native_proxy_handler(
+    ws: WebSocketUpgrade,
+    State(state): State<GatewayState>,
+    Query(query): Query<WsLiveNativeQuery>,
+) -> Response {
+    let upstream_base = match state.services.resolve("/ws/live-native") {
+        Some(url) => url.to_string(),
+        None => {
+            return (
+                axum::http::StatusCode::BAD_GATEWAY,
+                "No upstream for /ws/live-native",
+            )
+                .into_response();
+        }
+    };
+
+    let ws_base = upstream_base
+        .replace("http://", "ws://")
+        .replace("https://", "wss://");
+    let upstream_url = format!(
+        "{}/ws/live-native?token={}&room_id={}",
+        ws_base, query.token, query.room_id
+    );
 
     ws.on_upgrade(move |socket| bridge_websocket(socket, upstream_url))
 }

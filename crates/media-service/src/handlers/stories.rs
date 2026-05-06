@@ -1,9 +1,9 @@
 use axum::{
-    extract::{Multipart, Path, Query, State},
     Json,
+    extract::{Multipart, Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -32,7 +32,21 @@ pub struct StoryMediaRow {
     pub thumbnail_url: Option<String>,
     pub description: String,
     pub duration: Option<i32>,
+    /// CSS filter string (e.g. "sepia(0.9)") applied by the viewer. Plan §3.3 — S3.
+    pub filter_css: Option<String>,
+    /// CSS color for the caption overlay. Plan §3.3 — S2.
+    pub text_style_color: Option<String>,
+    /// CSS font-family stack for the caption overlay. Plan §3.3 — S2.
+    pub text_style_font: Option<String>,
     pub created_at: OffsetDateTime,
+}
+
+#[derive(Debug, FromRow)]
+pub struct UploadedMediaRow {
+    pub file_url: String,
+    pub file_type: String,
+    pub duration: Option<i32>,
+    pub thumbnail_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, FromRow)]
@@ -116,7 +130,7 @@ pub async fn list_stories(
 
         for story in &stories {
             let media = sqlx::query_as::<_, StoryMediaRow>(
-                "SELECT id, story_id, media_type, media_url, thumbnail_url, description, duration, created_at FROM story_media WHERE story_id = $1 ORDER BY created_at",
+                "SELECT id, story_id, media_type, media_url, thumbnail_url, description, duration, filter_css, text_style_color, text_style_font, created_at FROM story_media WHERE story_id = $1 ORDER BY created_at",
             )
             .bind(story.id)
             .fetch_all(&state.db)
@@ -157,7 +171,10 @@ pub async fn list_stories(
                 last_name: user.last_name.clone(),
                 avatar: user.avatar.clone(),
                 created_at: first_story.created_at,
-                expires_at: stories.last().map(|s| s.expires_at).unwrap_or(first_story.expires_at),
+                expires_at: stories
+                    .last()
+                    .map(|s| s.expires_at)
+                    .unwrap_or(first_story.expires_at),
                 media: all_media,
                 view_count: total_views,
                 has_viewed,
@@ -174,8 +191,12 @@ pub async fn create_story(
     mut multipart: Multipart,
 ) -> Result<Json<Value>, ApiError> {
     let mut file_data: Option<Vec<u8>> = None;
+    let mut media_id: Option<i64> = None;
     let mut content_type = String::new();
     let mut description = String::new();
+    let mut filter_css: Option<String> = None;
+    let mut text_style_color: Option<String> = None;
+    let mut text_style_font: Option<String> = None;
 
     while let Some(field) = multipart
         .next_field()
@@ -184,10 +205,7 @@ pub async fn create_story(
     {
         match field.name() {
             Some("media") => {
-                content_type = field
-                    .content_type()
-                    .unwrap_or("image/jpeg")
-                    .to_string();
+                content_type = field.content_type().unwrap_or("image/jpeg").to_string();
 
                 let data = field
                     .bytes()
@@ -195,39 +213,48 @@ pub async fn create_story(
                     .map_err(|e| ApiError::BadRequest(format!("Failed to read file: {}", e)))?;
 
                 if data.len() > 20 * 1024 * 1024 {
-                    return Err(ApiError::BadRequest("Story media must be under 20 MB".into()));
+                    return Err(ApiError::BadRequest(
+                        "Story media must be under 20 MB".into(),
+                    ));
                 }
                 file_data = Some(data.to_vec());
             }
             Some("description") => {
-                description = field
+                description = field.text().await.unwrap_or_default();
+            }
+            Some("media_id") => {
+                media_id = field
                     .text()
                     .await
-                    .unwrap_or_default();
+                    .ok()
+                    .and_then(|value| value.trim().parse::<i64>().ok());
+            }
+            Some("filter_css") => {
+                let v = field.text().await.unwrap_or_default();
+                // Sanity-limit and reject suspicious content. CSS filter values
+                // are short; anything above 256 chars is almost certainly bogus.
+                if !v.is_empty() && v.len() <= 256 && !v.contains(['<', '>', ';']) {
+                    filter_css = Some(v);
+                }
+            }
+            Some("text_style_color") => {
+                let v = field.text().await.unwrap_or_default();
+                // Accept `#rgb`, `#rrggbb`, or a few named colors to avoid CSS injection.
+                if (v.starts_with('#') && v.len() <= 9)
+                    || v.chars().all(|c| c.is_ascii_alphabetic())
+                {
+                    text_style_color = Some(v);
+                }
+            }
+            Some("text_style_font") => {
+                let v = field.text().await.unwrap_or_default();
+                if !v.is_empty() && v.len() <= 128 && !v.contains([';', '{', '}']) {
+                    text_style_font = Some(v);
+                }
             }
             _ => {}
         }
     }
-
-    let data = file_data.ok_or_else(|| ApiError::BadRequest("No media file provided".into()))?;
-
-    let media_type = if content_type.starts_with("video/") {
-        "video"
-    } else {
-        "image"
-    };
-
-    // Save file
-    let ext = mime_to_ext(&content_type);
-    let unique_name = format!("stories/{}/{}.{}", auth.user_id, uuid::Uuid::new_v4(), ext);
-    let file_url = format!("/uploads/{}", unique_name);
-
-    let upload_dir = format!("uploads/stories/{}", auth.user_id);
-    tokio::fs::create_dir_all(&upload_dir).await.ok();
-    tokio::fs::write(&format!("uploads/{}", unique_name), &data).await.map_err(|e| {
-        tracing::error!("Failed to write story media: {}", e);
-        ApiError::Internal("File write error".into())
-    })?;
 
     let mut tx = state.db.begin().await?;
 
@@ -242,34 +269,105 @@ pub async fn create_story(
     let story_id = if let Some(id) = story_id {
         id
     } else {
-        sqlx::query_scalar::<_, i64>(
-            "INSERT INTO stories (user_id) VALUES ($1) RETURNING id",
+        sqlx::query_scalar::<_, i64>("INSERT INTO stories (user_id) VALUES ($1) RETURNING id")
+            .bind(auth.user_id)
+            .fetch_one(&mut *tx)
+            .await?
+    };
+
+    let (media_type, media_url, thumbnail_url, duration) = if let Some(existing_media_id) = media_id
+    {
+        let media = sqlx::query_as::<_, UploadedMediaRow>(
+            r#"
+            SELECT file_url, file_type, duration, thumbnail_url
+            FROM uploaded_media
+            WHERE id = $1 AND user_id = $2
+            "#,
         )
+        .bind(existing_media_id)
         .bind(auth.user_id)
-        .fetch_one(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?
+        .ok_or_else(|| ApiError::NotFound("Uploaded media not found".into()))?;
+
+        if media.file_type != "image" && media.file_type != "video" {
+            return Err(ApiError::BadRequest(
+                "Stories only support image or video media".into(),
+            ));
+        }
+
+        let duration = if media.file_type == "video" {
+            Some(media.duration.unwrap_or(15))
+        } else {
+            Some(5)
+        };
+
+        (
+            media.file_type,
+            media.file_url,
+            media.thumbnail_url,
+            duration,
+        )
+    } else {
+        let data = file_data.ok_or_else(|| {
+            ApiError::BadRequest("Provide either media or media_id when creating a story".into())
+        })?;
+
+        let media_type = if content_type.starts_with("video/") {
+            "video".to_string()
+        } else {
+            "image".to_string()
+        };
+
+        let ext = mime_to_ext(&content_type);
+        let unique_name = format!("stories/{}/{}.{}", auth.user_id, uuid::Uuid::new_v4(), ext);
+
+        let storage = shared::storage::create_storage().await;
+        let file_url = storage
+            .upload(&unique_name, &data, &content_type)
+            .await?;
+
+        let duration = if media_type == "video" {
+            Some(15)
+        } else {
+            Some(5)
+        };
+
+        (media_type, file_url, None, duration)
     };
 
     let story_media = sqlx::query_as::<_, StoryMediaRow>(
         r#"
-        INSERT INTO story_media (story_id, media_type, media_url, description)
-        VALUES ($1, $2, $3, $4)
-        RETURNING id, story_id, media_type, media_url, thumbnail_url, description, duration, created_at
+        INSERT INTO story_media (
+            story_id, media_type, media_url, thumbnail_url, description, duration,
+            filter_css, text_style_color, text_style_font
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING id, story_id, media_type, media_url, thumbnail_url, description, duration,
+                  filter_css, text_style_color, text_style_font, created_at
         "#,
     )
     .bind(story_id)
-    .bind(media_type)
-    .bind(&file_url)
+    .bind(&media_type)
+    .bind(&media_url)
+    .bind(&thumbnail_url)
     .bind(&description)
+    .bind(duration)
+    .bind(&filter_css)
+    .bind(&text_style_color)
+    .bind(&text_style_font)
     .fetch_one(&mut *tx)
     .await?;
 
     tx.commit().await?;
 
-    let _ = state.event_bus.publish(&DomainEvent::StoryCreated {
-        story_id,
-        user_id: auth.user_id,
-    }).await;
+    let _ = state
+        .event_bus
+        .publish(&DomainEvent::StoryCreated {
+            story_id,
+            user_id: auth.user_id,
+        })
+        .await;
 
     Ok(Json(json!({
         "data": {
@@ -293,7 +391,7 @@ pub async fn get_story(
     .ok_or_else(|| ApiError::NotFound("Story not found".into()))?;
 
     let media = sqlx::query_as::<_, StoryMediaRow>(
-        "SELECT id, story_id, media_type, media_url, thumbnail_url, description, duration, created_at FROM story_media WHERE story_id = $1 ORDER BY created_at",
+        "SELECT id, story_id, media_type, media_url, thumbnail_url, description, duration, filter_css, text_style_color, text_style_font, created_at FROM story_media WHERE story_id = $1 ORDER BY created_at",
     )
     .bind(id)
     .fetch_all(&state.db)
@@ -350,12 +448,11 @@ pub async fn view_story(
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
     // id here is story_media_id
-    let exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM story_media WHERE id = $1)",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await?;
+    let exists =
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM story_media WHERE id = $1)")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await?;
 
     if !exists {
         return Err(ApiError::NotFound("Story media not found".into()));
@@ -500,12 +597,11 @@ pub async fn react_to_story(
     Path(id): Path<i64>,
     Json(req): Json<StoryReactionRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let exists = sqlx::query_scalar::<_, bool>(
-        "SELECT EXISTS(SELECT 1 FROM story_media WHERE id = $1)",
-    )
-    .bind(id)
-    .fetch_one(&state.db)
-    .await?;
+    let exists =
+        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM story_media WHERE id = $1)")
+            .bind(id)
+            .fetch_one(&state.db)
+            .await?;
 
     if !exists {
         return Err(ApiError::NotFound("Story media not found".into()));
@@ -555,13 +651,15 @@ pub async fn list_story_reactions(
 
     let data: Vec<Value> = rows
         .into_iter()
-        .map(|(uid, reaction, username, first_name, avatar, created_at)| {
-            json!({
-                "user_id": uid, "reaction": reaction,
-                "username": username, "first_name": first_name,
-                "avatar": avatar, "created_at": created_at.to_string()
-            })
-        })
+        .map(
+            |(uid, reaction, username, first_name, avatar, created_at)| {
+                json!({
+                    "user_id": uid, "reaction": reaction,
+                    "username": username, "first_name": first_name,
+                    "avatar": avatar, "created_at": created_at.to_string()
+                })
+            },
+        )
         .collect();
 
     Ok(Json(json!({ "data": data })))
@@ -616,20 +714,23 @@ pub async fn reply_to_story(
         cid
     };
 
-    // Insert the reply as a story_reply message type
+    // Insert the reply as a story_reply message type.
+    // Messages schema uses `content` (not `text`) and `media` JSONB.
     let msg_id = sqlx::query_scalar::<_, i64>(
-        r#"INSERT INTO messages (sender_id, conversation_id, text, message_type, metadata)
+        r#"INSERT INTO messages (sender_id, conversation_id, content, message_type, media)
         VALUES ($1, $2, $3, 'story_reply', $4)
         RETURNING id"#,
     )
     .bind(auth.user_id)
     .bind(conv_id)
     .bind(&req.text)
-    .bind(json!({ "story_media_id": id }))
+    .bind(json!([{ "story_media_id": id }]))
     .fetch_one(&state.db)
     .await?;
 
-    Ok(Json(json!({ "data": { "message_id": msg_id, "conversation_id": conv_id } })))
+    Ok(Json(
+        json!({ "data": { "message_id": msg_id, "conversation_id": conv_id } }),
+    ))
 }
 
 #[derive(Debug, Deserialize)]

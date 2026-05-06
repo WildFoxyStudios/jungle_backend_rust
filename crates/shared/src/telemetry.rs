@@ -7,14 +7,29 @@
 //!
 //! Call [`init`] from every microservice's `main()` **before** constructing
 //! the `tracing_subscriber::registry()`.
+//!
+//! ### Opt-in semantics (D7)
+//!
+//! Distributed tracing is **off by default**. Set the standard OTel env vars
+//! to enable it:
+//!
+//! ```bash
+//! export OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
+//! export OTEL_TRACES_SAMPLER_ARG=0.05   # 5% sampling, optional
+//! export RUST_LOG=info,sqlx=warn        # optional override
+//! ```
+//!
+//! When `OTEL_EXPORTER_OTLP_ENDPOINT` is unset or empty, [`init`] only wires
+//! the `tracing-subscriber` fmt layer — no extra dependencies hit the network
+//! and no spans are exported.
 
-use opentelemetry::{global, trace::TracerProvider, KeyValue};
+use opentelemetry::{KeyValue, global, trace::TracerProvider};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::{
-    trace::{self as sdktrace, RandomIdGenerator, Sampler},
     Resource,
+    trace::{self as sdktrace, RandomIdGenerator, Sampler},
 };
-use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, EnvFilter};
+use tracing_subscriber::{EnvFilter, layer::SubscriberExt, util::SubscriberInitExt};
 
 /// Initialize the global tracing subscriber and (if configured) the OpenTelemetry
 /// exporter. Reads:
@@ -32,15 +47,15 @@ pub fn init(service_name: &str) {
         .ok()
         .filter(|s| !s.is_empty());
 
-    let otel_layer = endpoint.as_deref().and_then(|ep| {
-        match build_tracer(service_name, ep) {
+    let otel_layer = endpoint
+        .as_deref()
+        .and_then(|ep| match build_tracer(service_name, ep) {
             Ok(tracer) => Some(tracing_opentelemetry::layer().with_tracer(tracer)),
             Err(e) => {
                 eprintln!("OTLP init failed: {e} (continuing without distributed tracing)");
                 None
             }
-        }
-    });
+        });
 
     tracing_subscriber::registry()
         .with(env_filter)

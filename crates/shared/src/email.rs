@@ -1,7 +1,7 @@
 use lettre::{
-    message::{header::ContentType, Mailbox},
-    transport::smtp::authentication::Credentials,
     AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor,
+    message::{Mailbox, header::ContentType},
+    transport::smtp::authentication::Credentials,
 };
 use once_cell::sync::OnceCell;
 use std::sync::Arc;
@@ -41,8 +41,7 @@ impl SmtpConfig {
             encryption: std::env::var("SMTP_ENCRYPTION").unwrap_or_else(|_| "tls".into()),
             from_email: std::env::var("SMTP_FROM_EMAIL")
                 .unwrap_or_else(|_| "noreply@example.com".into()),
-            from_name: std::env::var("SMTP_FROM_NAME")
-                .unwrap_or_else(|_| "Jungle".into()),
+            from_name: std::env::var("SMTP_FROM_NAME").unwrap_or_else(|_| "Jungle".into()),
         })
     }
 }
@@ -88,12 +87,7 @@ impl EmailSender {
         EMAIL_SENDER.get()
     }
 
-    pub async fn send(
-        &self,
-        to_email: &str,
-        subject: &str,
-        html_body: &str,
-    ) -> Result<(), String> {
+    pub async fn send(&self, to_email: &str, subject: &str, html_body: &str) -> Result<(), String> {
         let to_mailbox: Mailbox = to_email
             .parse()
             .map_err(|e| format!("Invalid recipient: {}", e))?;

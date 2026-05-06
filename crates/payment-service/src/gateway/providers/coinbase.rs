@@ -2,13 +2,15 @@ use async_trait::async_trait;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 
+use crate::gateway::signature::verify_hmac_sha256_hex;
 use crate::gateway::{
-    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus,
-    PaymentStatusKind, RefundResult, WebhookEvent,
+    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
+    RefundResult, WebhookEvent,
 };
 
 pub struct CoinbaseGateway {
     api_key: String,
+    webhook_secret: String,
     client: reqwest::Client,
 }
 
@@ -16,6 +18,7 @@ impl CoinbaseGateway {
     pub fn from_env() -> Self {
         Self {
             api_key: std::env::var("COINBASE_COMMERCE_API_KEY").unwrap_or_default(),
+            webhook_secret: std::env::var("COINBASE_COMMERCE_WEBHOOK_SECRET").unwrap_or_default(),
             client: reqwest::Client::new(),
         }
     }
@@ -50,11 +53,17 @@ impl PaymentGateway for CoinbaseGateway {
             .send()
             .await?;
 
-        let body: serde_json::Value = resp.json().await.map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         if body["error"].is_object() {
             return Err(PaymentError::ProviderError(
-                body["error"]["message"].as_str().unwrap_or("Unknown error").into(),
+                body["error"]["message"]
+                    .as_str()
+                    .unwrap_or("Unknown error")
+                    .into(),
             ));
         }
 
@@ -77,7 +86,10 @@ impl PaymentGateway for CoinbaseGateway {
             .send()
             .await?;
 
-        let body: serde_json::Value = resp.json().await.map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+        let body: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         let timeline = body["data"]["timeline"].as_array();
         let last_status = timeline
@@ -100,9 +112,22 @@ impl PaymentGateway for CoinbaseGateway {
         })
     }
 
-    async fn handle_webhook(&self, payload: &[u8], _signature: &str) -> Result<WebhookEvent, PaymentError> {
-        let body: serde_json::Value =
-            serde_json::from_slice(payload).map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+    /// Verify a Coinbase Commerce webhook.
+    ///
+    /// Coinbase sends `X-CC-Webhook-Signature: <hex>` where the value is
+    /// HMAC-SHA256(shared_secret, raw_body). The shared secret is the
+    /// "Webhook Shared Secret" from the Coinbase Commerce settings page, not
+    /// the API key. Documented at
+    /// https://commerce.coinbase.com/docs/api/#webhooks
+    async fn handle_webhook(
+        &self,
+        payload: &[u8],
+        signature: &str,
+    ) -> Result<WebhookEvent, PaymentError> {
+        verify_hmac_sha256_hex(self.webhook_secret.as_bytes(), payload, signature)?;
+
+        let body: serde_json::Value = serde_json::from_slice(payload)
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         let event = &body["event"];
         let event_type = event["type"].as_str().unwrap_or("unknown").to_string();
@@ -124,7 +149,11 @@ impl PaymentGateway for CoinbaseGateway {
         })
     }
 
-    async fn refund(&self, tx_id: &str, amount: Option<Decimal>) -> Result<RefundResult, PaymentError> {
+    async fn refund(
+        &self,
+        tx_id: &str,
+        amount: Option<Decimal>,
+    ) -> Result<RefundResult, PaymentError> {
         Err(PaymentError::RefundFailed(format!(
             "Coinbase Commerce does not support refunds via API for charge {}. Amount: {:?}",
             tx_id, amount

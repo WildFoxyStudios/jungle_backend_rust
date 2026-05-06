@@ -1,6 +1,6 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -12,12 +12,11 @@ pub async fn get_privacy_settings(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
-    let settings: Value = sqlx::query_scalar(
-        "SELECT COALESCE(privacy_settings, '{}') FROM users WHERE id = $1",
-    )
-    .bind(auth.user_id)
-    .fetch_one(&state.db)
-    .await?;
+    let settings: Value =
+        sqlx::query_scalar("SELECT COALESCE(privacy_settings, '{}') FROM users WHERE id = $1")
+            .bind(auth.user_id)
+            .fetch_one(&state.db)
+            .await?;
 
     Ok(Json(json!({ "data": settings })))
 }
@@ -39,12 +38,24 @@ pub async fn update_privacy_settings(
 ) -> Result<Json<Value>, ApiError> {
     // Build JSONB patch
     let mut patch = json!({});
-    if let Some(v) = &req.follow_privacy { patch["follow_privacy"] = json!(v); }
-    if let Some(v) = &req.message_privacy { patch["message_privacy"] = json!(v); }
-    if let Some(v) = &req.post_privacy { patch["post_privacy"] = json!(v); }
-    if let Some(v) = &req.birth_privacy { patch["birth_privacy"] = json!(v); }
-    if let Some(v) = &req.online_privacy { patch["online_privacy"] = json!(v); }
-    if let Some(v) = &req.profile_visibility { patch["profile_visibility"] = json!(v); }
+    if let Some(v) = &req.follow_privacy {
+        patch["follow_privacy"] = json!(v);
+    }
+    if let Some(v) = &req.message_privacy {
+        patch["message_privacy"] = json!(v);
+    }
+    if let Some(v) = &req.post_privacy {
+        patch["post_privacy"] = json!(v);
+    }
+    if let Some(v) = &req.birth_privacy {
+        patch["birth_privacy"] = json!(v);
+    }
+    if let Some(v) = &req.online_privacy {
+        patch["online_privacy"] = json!(v);
+    }
+    if let Some(v) = &req.profile_visibility {
+        patch["profile_visibility"] = json!(v);
+    }
 
     sqlx::query(
         "UPDATE users SET privacy_settings = COALESCE(privacy_settings, '{}')::jsonb || $1::jsonb WHERE id = $2",
@@ -63,12 +74,11 @@ pub async fn get_notification_settings(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
-    let settings: Value = sqlx::query_scalar(
-        "SELECT COALESCE(notification_settings, '{}') FROM users WHERE id = $1",
-    )
-    .bind(auth.user_id)
-    .fetch_one(&state.db)
-    .await?;
+    let settings: Value =
+        sqlx::query_scalar("SELECT COALESCE(notification_settings, '{}') FROM users WHERE id = $1")
+            .bind(auth.user_id)
+            .fetch_one(&state.db)
+            .await?;
 
     Ok(Json(json!({ "data": settings })))
 }
@@ -78,51 +88,13 @@ pub async fn update_notification_settings(
     auth: AuthUser,
     Json(settings): Json<Value>,
 ) -> Result<Json<Value>, ApiError> {
-    sqlx::query(
-        "UPDATE users SET notification_settings = $1 WHERE id = $2",
-    )
-    .bind(&settings)
-    .bind(auth.user_id)
-    .execute(&state.db)
-    .await?;
+    sqlx::query("UPDATE users SET notification_settings = $1 WHERE id = $2")
+        .bind(&settings)
+        .bind(auth.user_id)
+        .execute(&state.db)
+        .await?;
 
     Ok(Json(json!({ "data": { "updated": true } })))
-}
-
-// ── Onboarding ──
-
-#[derive(Debug, Deserialize)]
-pub struct OnboardingSkipRequest {
-    pub step: String, // "avatar" | "info" | "follow"
-}
-
-/// POST /v1/users/me/onboarding/skip — mark a step as intentionally skipped
-pub async fn onboarding_skip(
-    State(state): State<AppState>,
-    auth: AuthUser,
-    Json(req): Json<OnboardingSkipRequest>,
-) -> Result<Json<Value>, ApiError> {
-    let valid = ["avatar", "info", "follow"];
-    if !valid.contains(&req.step.as_str()) {
-        return Err(ApiError::BadRequest(format!(
-            "step must be one of {:?}",
-            valid
-        )));
-    }
-
-    // Persist in a JSON column of users table: onboarding_progress -> { "<step>": "skipped" }
-    sqlx::query(
-        r#"UPDATE users
-              SET onboarding_progress = COALESCE(onboarding_progress, '{}'::jsonb)
-                                        || jsonb_build_object($2::text, 'skipped')
-            WHERE id = $1"#,
-    )
-    .bind(auth.user_id)
-    .bind(&req.step)
-    .execute(&state.db)
-    .await?;
-
-    Ok(Json(json!({ "data": { "skipped": req.step } })))
 }
 
 // ── Invite Codes ──

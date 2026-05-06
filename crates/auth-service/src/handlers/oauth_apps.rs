@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -11,6 +11,7 @@ use shared::{
 use sqlx::FromRow;
 use time::OffsetDateTime;
 use uuid::Uuid;
+use argon2::{PasswordHasher, PasswordVerifier};
 use validator::Validate;
 
 #[derive(Debug, Serialize, FromRow)]
@@ -62,6 +63,14 @@ pub async fn create_app(
     req.validate()?;
 
     let client_secret = Uuid::new_v4().to_string();
+
+    // Hash the client_secret with Argon2id before storing
+    let salt = argon2::password_hash::SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
+    let secret_hash = argon2::Argon2::default()
+        .hash_password(client_secret.as_bytes(), &salt)
+        .map_err(|e| ApiError::Internal(format!("hash error: {}", e)))?
+        .to_string();
+
     let permissions = req.permissions.unwrap_or(json!(["read"]));
 
     let app = sqlx::query_as::<_, OAuthAppRow>(
@@ -75,7 +84,7 @@ pub async fn create_app(
     .bind(&req.redirect_uri)
     .bind(&req.description)
     .bind(&permissions)
-    .bind(&client_secret)
+    .bind(&secret_hash)
     .fetch_one(&state.db)
     .await?;
 
@@ -168,14 +177,13 @@ pub async fn get_app_permissions(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let perms: serde_json::Value = sqlx::query_scalar(
-        "SELECT permissions FROM oauth_apps WHERE id = $1 AND user_id = $2",
-    )
-    .bind(id)
-    .bind(auth.user_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound("App not found".into()))?;
+    let perms: serde_json::Value =
+        sqlx::query_scalar("SELECT permissions FROM oauth_apps WHERE id = $1 AND user_id = $2")
+            .bind(id)
+            .bind(auth.user_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or(ApiError::NotFound("App not found".into()))?;
 
     Ok(Json(json!({ "data": perms })))
 }
@@ -202,7 +210,9 @@ pub async fn authorize(
     // Validate state parameter shape if provided (prevent oversized/crafted payloads)
     if let Some(s) = req.state.as_deref()
         && (s.len() > 128
-            || !s.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'))
+            || !s
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.'))
     {
         return Err(ApiError::BadRequest(
             "state must be ≤128 chars of [A-Za-z0-9-_.]".into(),
@@ -281,18 +291,20 @@ pub async fn exchange_token(
         }
     }
 
-    // Verify client_secret — propagate DB errors instead of silently returning false.
-    let valid: bool = sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM oauth_apps WHERE id = $1 AND client_secret = $2)",
+    // Verify client_secret — fetch stored hash and verify with Argon2id
+    let stored_hash: String = sqlx::query_scalar(
+        "SELECT client_secret FROM oauth_apps WHERE id = $1",
     )
     .bind(app_id)
-    .bind(&req.client_secret)
-    .fetch_one(&state.db)
-    .await?;
+    .fetch_optional(&state.db)
+    .await?
+    .ok_or(ApiError::Unauthorized)?;
 
-    if !valid {
-        return Err(ApiError::Unauthorized);
-    }
+    let parsed = argon2::PasswordHash::new(&stored_hash)
+        .map_err(|_| ApiError::Unauthorized)?;
+    argon2::Argon2::default()
+        .verify_password(req.client_secret.as_bytes(), &parsed)
+        .map_err(|_| ApiError::Unauthorized)?;
 
     // Generate access token
     let access_token = Uuid::new_v4().to_string();

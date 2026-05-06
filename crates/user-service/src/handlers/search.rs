@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Query, State},
     Json,
+    extract::{Query, State},
 };
 use serde::{Deserialize, Serialize};
 use shared::{
@@ -216,7 +216,9 @@ pub async fn list_my_activities(
     let data: Vec<_> = rows.into_iter().take(limit as usize).collect();
     let next_cursor = data.last().map(|r| r.id.to_string());
 
-    Ok(Json(serde_json::json!({ "data": data, "meta": { "cursor": next_cursor, "has_more": has_more } })))
+    Ok(Json(
+        serde_json::json!({ "data": data, "meta": { "cursor": next_cursor, "has_more": has_more } }),
+    ))
 }
 
 /// PUT /v1/users/me/location — Save user GPS coordinates (PHP: save_user_location.php)

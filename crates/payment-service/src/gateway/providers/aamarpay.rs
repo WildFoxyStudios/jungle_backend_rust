@@ -2,9 +2,10 @@ use async_trait::async_trait;
 use rust_decimal::Decimal;
 use std::collections::HashMap;
 
+use crate::gateway::signature::verify_shared_secret;
 use crate::gateway::{
-    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus,
-    PaymentStatusKind, RefundResult, WebhookEvent,
+    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
+    RefundResult, WebhookEvent,
 };
 
 pub struct AamarPayGateway {
@@ -67,7 +68,10 @@ impl PaymentGateway for AamarPayGateway {
 
         if result["result"].as_str() != Some("true") {
             return Err(PaymentError::ProviderError(
-                result["error_message"].as_str().unwrap_or("aamarPay error").to_string(),
+                result["error_message"]
+                    .as_str()
+                    .unwrap_or("aamarPay error")
+                    .to_string(),
             ));
         }
 
@@ -108,9 +112,21 @@ impl PaymentGateway for AamarPayGateway {
         })
     }
 
-    async fn handle_webhook(&self, payload: &[u8], _signature: &str) -> Result<WebhookEvent, PaymentError> {
-        let body: serde_json::Value =
-            serde_json::from_slice(payload).map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+    /// Verify an aamarPay webhook.
+    ///
+    /// aamarPay sends the `signature_key` as a field inside the JSON webhook
+    /// body. We compare it in constant time against the value configured via
+    /// `AAMARPAY_SIGNATURE_KEY`.
+    async fn handle_webhook(
+        &self,
+        payload: &[u8],
+        _signature: &str,
+    ) -> Result<WebhookEvent, PaymentError> {
+        let body: serde_json::Value = serde_json::from_slice(payload)
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+
+        let provided_key = body["signature_key"].as_str().unwrap_or("");
+        verify_shared_secret(self.signature_key.as_bytes(), provided_key)?;
 
         let status = match body["pay_status"].as_str() {
             Some("Successful") => PaymentStatusKind::Completed,
@@ -128,7 +144,11 @@ impl PaymentGateway for AamarPayGateway {
         })
     }
 
-    async fn refund(&self, _tx_id: &str, _amount: Option<Decimal>) -> Result<RefundResult, PaymentError> {
+    async fn refund(
+        &self,
+        _tx_id: &str,
+        _amount: Option<Decimal>,
+    ) -> Result<RefundResult, PaymentError> {
         // aamarPay does not provide a direct refund API; refunds are processed manually via dashboard
         Err(PaymentError::ProviderError(
             "aamarPay refunds must be processed via the merchant dashboard".to_string(),

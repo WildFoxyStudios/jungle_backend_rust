@@ -33,6 +33,7 @@ Bienvenido al índice de documentación del backend de Jungle.
 | [Admin Service](./api/admin-service.md) | 3010 | ~150 | Dashboard, moderación, configuración completa |
 | [Realtime Service](./api/realtime-service.md) | 3012 | WebSocket | Hub WS, presencia, relay de eventos NATS |
 | [AI Service](./api/ai-service.md) | 3013 | ~15 | Generación texto/imágenes, créditos, admin de proveedores |
+| [Live Service](./api/live-service.md) | 3014 | WebSocket + REST | Señalización WebRTC self-hosted para live/calls/video-calls |
 
 ### Referencia Técnica
 
@@ -48,3 +49,11 @@ Bienvenido al índice de documentación del backend de Jungle.
 | [Observabilidad](./observability.md) | Prometheus, OpenTelemetry, logs estructurados |
 | [Resiliencia](./resilience.md) | Circuit breaker, retry con backoff, DLQ, rate limiting |
 | [Migración MySQL → PostgreSQL](./migration.md) | Herramienta de migración desde instalación PHP |
+
+### Operación y Producción
+
+| Documento | Descripción |
+|-----------|-------------|
+| [Matriz de Entorno](./env-matrix.md) | Variables por entorno (dev/staging/prod), obligatoriedad y sensibilidad |
+| [Producción en Fly.io](./production-flyio.md) | Arquitectura recomendada, secretos, despliegue, healthchecks y rollback |
+| [Runbook de Despliegue](./runbooks/deploy.md) | Procedimiento paso a paso, smoke tests y plan de reversión |

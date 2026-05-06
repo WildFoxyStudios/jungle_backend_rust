@@ -1,9 +1,6 @@
-use axum::{
-    extract::State,
-    Json,
-};
+use axum::{Json, extract::State};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -63,7 +60,10 @@ pub async fn update_preferences(
 
         for key in obj.keys() {
             if !allowed_keys.contains(&key.as_str()) {
-                return Err(ApiError::BadRequest(format!("Unknown preference key: {}", key)));
+                return Err(ApiError::BadRequest(format!(
+                    "Unknown preference key: {}",
+                    key
+                )));
             }
         }
 
@@ -77,7 +77,9 @@ pub async fn update_preferences(
             }
         }
     } else {
-        return Err(ApiError::BadRequest("notification_settings must be a JSON object".into()));
+        return Err(ApiError::BadRequest(
+            "notification_settings must be a JSON object".into(),
+        ));
     }
 
     // Merge with existing settings (JSONB || operator)

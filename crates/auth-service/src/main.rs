@@ -1,9 +1,9 @@
 mod handlers;
 mod routes;
 
+use http::{Method, header};
 use shared::{auth::AppState, config::AppConfig, db};
 use std::sync::Arc;
-use http::{header, Method};
 use tower_http::cors::{AllowHeaders, AllowMethods, AllowOrigin, CorsLayer};
 #[tokio::main]
 async fn main() {
@@ -15,8 +15,8 @@ async fn main() {
     tracing::info!("Running database migrations...");
     db::run_migrations(&pool).await;
 
-    let redis_client = redis::Client::open(config.redis_url.as_str())
-        .expect("Failed to create Redis client");
+    let redis_client =
+        redis::Client::open(config.redis_url.as_str()).expect("Failed to create Redis client");
     let redis_conn = redis::aio::ConnectionManager::new(redis_client)
         .await
         .expect("Failed to connect to Redis");
@@ -47,10 +47,7 @@ async fn main() {
         .allow_credentials(true)
         .max_age(std::time::Duration::from_secs(3600));
 
-    let event_bus: std::sync::Arc<dyn shared::events::EventBus> = match shared::events::NatsEventBus::connect(&config.nats_url).await {
-        Ok(bus) => std::sync::Arc::new(bus),
-        Err(e) => { tracing::warn!("NATS unavailable: {e}"); std::sync::Arc::new(shared::events::NoopEventBus) }
-    };
+    let event_bus = shared::events::connect_event_bus(&config.nats_url).await;
     let state = AppState {
         db: pool,
         redis: redis_conn,
@@ -59,13 +56,26 @@ async fn main() {
     };
 
     let app = routes::create_router(state)
-        .route("/metrics", axum::routing::get(shared::metrics::metrics_handler))
-        .layer(axum::middleware::from_fn(shared::metrics::metrics_middleware))
+        .route(
+            "/metrics",
+            axum::routing::get(shared::metrics::metrics_handler),
+        )
+        .layer(axum::middleware::from_fn(
+            shared::metrics::metrics_middleware,
+        ))
         .layer(cors);
     let addr = config.listen_addr();
 
     tracing::info!("auth-service listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    // `into_make_service_with_connect_info` is needed so the login
+    // handler can access the peer's `SocketAddr` via `ConnectInfo` —
+    // we use it to drive the unusual-login detection.
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .await
+    .unwrap();
 }

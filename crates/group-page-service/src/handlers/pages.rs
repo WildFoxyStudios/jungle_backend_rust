@@ -1,9 +1,9 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -243,10 +243,13 @@ pub async fn like_page(
         .execute(&state.db)
         .await?;
 
-    let _ = state.event_bus.publish(&DomainEvent::PageLiked {
-        page_id: id,
-        user_id: auth.user_id,
-    }).await;
+    let _ = state
+        .event_bus
+        .publish(&DomainEvent::PageLiked {
+            page_id: id,
+            user_id: auth.user_id,
+        })
+        .await;
 
     Ok(Json(json!({ "data": { "liked": true } })))
 }
@@ -336,7 +339,9 @@ pub async fn page_likers(
     let has_more = users.len() as i64 > limit;
     let users: Vec<_> = users.into_iter().take(limit as usize).collect();
 
-    Ok(Json(json!({ "data": users, "meta": { "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": users, "meta": { "has_more": has_more } }),
+    ))
 }
 
 pub async fn list_admins(
@@ -365,13 +370,17 @@ pub async fn add_admin(
 ) -> Result<Json<Value>, ApiError> {
     verify_page_admin(&state, id, auth.user_id).await?;
 
-    let user_id = body["user_id"].as_i64().ok_or_else(|| ApiError::BadRequest("user_id required".into()))?;
+    let user_id = body["user_id"]
+        .as_i64()
+        .ok_or_else(|| ApiError::BadRequest("user_id required".into()))?;
 
-    sqlx::query("INSERT INTO page_admins (page_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
-        .bind(id)
-        .bind(user_id)
-        .execute(&state.db)
-        .await?;
+    sqlx::query(
+        "INSERT INTO page_admins (page_id, user_id) VALUES ($1, $2) ON CONFLICT DO NOTHING",
+    )
+    .bind(id)
+    .bind(user_id)
+    .execute(&state.db)
+    .await?;
 
     Ok(Json(json!({ "data": { "added": true } })))
 }
@@ -401,9 +410,7 @@ pub async fn remove_admin(
     Ok(Json(json!({ "data": { "removed": true } })))
 }
 
-pub async fn list_categories(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, ApiError> {
+pub async fn list_categories(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let cats = sqlx::query_as::<_, CategoryRow>(
         "SELECT id, name_key, slug, parent_id FROM categories WHERE type = 'page' AND active = TRUE ORDER BY sort_order",
     )
@@ -534,7 +541,12 @@ pub async fn nearby_pages(
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
 
     // Resolve category identifier flexibly: accept slug, name_key, or numeric id.
-    let category_id: Option<i64> = if let Some(cat) = q.category.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+    let category_id: Option<i64> = if let Some(cat) = q
+        .category
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
         if let Ok(id) = cat.parse::<i64>() {
             Some(id)
         } else {

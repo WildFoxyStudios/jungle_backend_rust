@@ -1,7 +1,7 @@
 use argon2::PasswordVerifier;
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use redis::AsyncCommands;
 use serde::{Deserialize, Serialize};
@@ -19,7 +19,7 @@ use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
 pub struct DeleteAccountRequest {
-    pub password: String,
+    pub password: Option<String>,
 }
 
 /// DELETE /v1/users/me — soft-delete the authenticated user's account
@@ -28,24 +28,27 @@ pub async fn delete_account(
     auth: AuthUser,
     Json(req): Json<DeleteAccountRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    // Verify password before deletion
-    let password_hash: String = sqlx::query_scalar(
-        "SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(auth.user_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or(ApiError::NotFound("User not found".into()))?;
+    // Verify password before deletion (skip for social-login-only accounts)
+    let password_hash: Option<String> =
+        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL")
+            .bind(auth.user_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or(ApiError::NotFound("User not found".into()))?;
 
-    let parsed = argon2::PasswordHash::new(&password_hash)
-        .map_err(|_| ApiError::Internal("Password hash error".into()))?;
-    let valid = argon2::Argon2::default()
-        .verify_password(req.password.as_bytes(), &parsed)
-        .is_ok();
+    if let Some(hash) = password_hash.filter(|h| !h.is_empty()) {
+        let provided = req.password.as_deref().unwrap_or("");
+        let parsed = argon2::PasswordHash::new(&hash)
+            .map_err(|_| ApiError::Internal("Password hash error".into()))?;
+        let valid = argon2::Argon2::default()
+            .verify_password(provided.as_bytes(), &parsed)
+            .is_ok();
 
-    if !valid {
-        return Err(ApiError::Unauthorized);
+        if !valid {
+            return Err(ApiError::Unauthorized);
+        }
     }
+    // If no local password (social-login only), the JWT already proves identity
 
     // Soft delete
     sqlx::query("UPDATE users SET deleted_at = NOW(), is_active = FALSE WHERE id = $1")
@@ -414,6 +417,7 @@ pub async fn pro_users(
 pub struct SkillRow {
     pub id: i64,
     pub name: String,
+    pub endorsement_count: i64,
 }
 
 /// GET /v1/users/{username}/skills
@@ -430,7 +434,10 @@ pub async fn user_skills(
     .ok_or(ApiError::NotFound("User not found".into()))?;
 
     let skills = sqlx::query_as::<_, SkillRow>(
-        "SELECT id, name FROM user_skills WHERE user_id = $1 ORDER BY name ASC",
+        r#"SELECT id, skill AS name, 0::bigint AS endorsement_count
+           FROM user_skills
+           WHERE user_id = $1
+           ORDER BY skill ASC"#,
     )
     .bind(user_id)
     .fetch_all(&state.db)
@@ -447,9 +454,12 @@ pub async fn search_skills(
     let q = format!("{}%", params.q.unwrap_or_default());
 
     let skills = sqlx::query_as::<_, SkillRow>(
-        r#"SELECT DISTINCT id, name FROM user_skills
-           WHERE name ILIKE $1
-           ORDER BY name ASC LIMIT 20"#,
+        r#"SELECT MIN(id) AS id, skill AS name, 0::bigint AS endorsement_count
+           FROM user_skills
+           WHERE skill ILIKE $1
+           GROUP BY skill
+           ORDER BY skill ASC
+           LIMIT 20"#,
     )
     .bind(&q)
     .fetch_all(&state.db)
@@ -629,7 +639,9 @@ pub async fn add_skill(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let trimmed = req.skill.trim();
     if trimmed.is_empty() || trimmed.len() > 100 {
-        return Err(ApiError::BadRequest("Skill must be 1-100 characters".into()));
+        return Err(ApiError::BadRequest(
+            "Skill must be 1-100 characters".into(),
+        ));
     }
 
     let row = sqlx::query_as::<_, UserSkillRow>(
@@ -701,7 +713,7 @@ pub async fn get_my_field_values(
                COALESCE(ufv.value, '') AS value
         FROM profile_fields pf
         LEFT JOIN user_field_values ufv ON ufv.field_id = pf.id AND ufv.user_id = $1
-        WHERE pf.is_active = true
+        WHERE pf.active = true
         ORDER BY pf.sort_order ASC, pf.id ASC
         "#,
     )
@@ -723,7 +735,7 @@ pub async fn get_user_field_values(
                COALESCE(ufv.value, '') AS value
         FROM profile_fields pf
         LEFT JOIN user_field_values ufv ON ufv.field_id = pf.id AND ufv.user_id = $1
-        WHERE pf.is_active = true
+        WHERE pf.active = true
         ORDER BY pf.sort_order ASC, pf.id ASC
         "#,
     )
@@ -751,11 +763,26 @@ pub async fn download_my_info(
     auth: AuthUser,
     Json(req): Json<DownloadInfoRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let valid_types = ["posts", "pages", "groups", "followers", "following", "my_information", "friends"];
-    let requested: Vec<&str> = req.data.iter().map(|s| s.as_str()).filter(|s| valid_types.contains(s)).collect();
+    let valid_types = [
+        "posts",
+        "pages",
+        "groups",
+        "followers",
+        "following",
+        "my_information",
+        "friends",
+    ];
+    let requested: Vec<&str> = req
+        .data
+        .iter()
+        .map(|s| s.as_str())
+        .filter(|s| valid_types.contains(s))
+        .collect();
 
     if requested.is_empty() {
-        return Err(ApiError::BadRequest("Provide at least one valid data type".into()));
+        return Err(ApiError::BadRequest(
+            "Provide at least one valid data type".into(),
+        ));
     }
 
     let mut result = serde_json::Map::new();
@@ -769,27 +796,34 @@ pub async fn download_my_info(
                 .bind(auth.user_id)
                 .fetch_optional(&state.db)
                 .await?;
-                result.insert("my_information".into(), row.unwrap_or(serde_json::Value::Null));
+                result.insert(
+                    "my_information".into(),
+                    row.unwrap_or(serde_json::Value::Null),
+                );
             }
             "posts" => {
-                let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM posts WHERE user_id = $1 AND deleted_at IS NULL")
-                    .bind(auth.user_id)
-                    .fetch_one(&state.db)
-                    .await?;
+                let count: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM posts WHERE user_id = $1 AND deleted_at IS NULL",
+                )
+                .bind(auth.user_id)
+                .fetch_one(&state.db)
+                .await?;
                 result.insert("posts_count".into(), json!(count));
             }
             "followers" => {
-                let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM follows WHERE following_id = $1")
-                    .bind(auth.user_id)
-                    .fetch_one(&state.db)
-                    .await?;
+                let count: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM follows WHERE following_id = $1")
+                        .bind(auth.user_id)
+                        .fetch_one(&state.db)
+                        .await?;
                 result.insert("followers_count".into(), json!(count));
             }
             "following" => {
-                let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM follows WHERE follower_id = $1")
-                    .bind(auth.user_id)
-                    .fetch_one(&state.db)
-                    .await?;
+                let count: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM follows WHERE follower_id = $1")
+                        .bind(auth.user_id)
+                        .fetch_one(&state.db)
+                        .await?;
                 result.insert("following_count".into(), json!(count));
             }
             "friends" => {
@@ -802,17 +836,20 @@ pub async fn download_my_info(
                 result.insert("friends_count".into(), json!(count));
             }
             "pages" => {
-                let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pages WHERE user_id = $1 AND deleted_at IS NULL")
-                    .bind(auth.user_id)
-                    .fetch_one(&state.db)
-                    .await?;
+                let count: i64 = sqlx::query_scalar(
+                    "SELECT COUNT(*) FROM pages WHERE user_id = $1 AND deleted_at IS NULL",
+                )
+                .bind(auth.user_id)
+                .fetch_one(&state.db)
+                .await?;
                 result.insert("pages_count".into(), json!(count));
             }
             "groups" => {
-                let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM group_members WHERE user_id = $1")
-                    .bind(auth.user_id)
-                    .fetch_one(&state.db)
-                    .await?;
+                let count: i64 =
+                    sqlx::query_scalar("SELECT COUNT(*) FROM group_members WHERE user_id = $1")
+                        .bind(auth.user_id)
+                        .fetch_one(&state.db)
+                        .await?;
                 result.insert("groups_count".into(), json!(count));
             }
             _ => {}
@@ -912,7 +949,17 @@ pub async fn create_report(
     auth: AuthUser,
     Json(req): Json<CreateReportRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
-    let valid_types = ["user", "post", "page", "group", "comment", "blog", "movie", "product"];
+    let valid_types = [
+        "user",
+        "post",
+        "reel",
+        "page",
+        "group",
+        "comment",
+        "blog",
+        "movie",
+        "product",
+    ];
     if !valid_types.contains(&req.target_type.as_str()) {
         return Err(ApiError::BadRequest(format!(
             "target_type must be one of: {}",
@@ -934,7 +981,9 @@ pub async fn create_report(
     .await?;
 
     if already {
-        return Err(ApiError::BadRequest("You already have a pending report for this item".into()));
+        return Err(ApiError::BadRequest(
+            "You already have a pending report for this item".into(),
+        ));
     }
 
     let id: i64 = sqlx::query_scalar(
@@ -971,7 +1020,9 @@ pub async fn record_admob_points(
     let (enabled, admob_pts, free_limit, _pro_limit) = config;
 
     if !enabled || admob_pts == 0 {
-        return Ok(Json(json!({ "data": { "awarded": false, "message": "Points system is disabled" } })));
+        return Ok(Json(
+            json!({ "data": { "awarded": false, "message": "Points system is disabled" } }),
+        ));
     }
 
     let today = time::OffsetDateTime::now_utc().date();
@@ -982,7 +1033,9 @@ pub async fn record_admob_points(
     let current_today: i64 = redis.get(&daily_key).await.unwrap_or(0);
 
     if current_today + admob_pts > free_limit {
-        return Ok(Json(json!({ "data": { "awarded": false, "message": "Daily points limit reached" } })));
+        return Ok(Json(
+            json!({ "data": { "awarded": false, "message": "Daily points limit reached" } }),
+        ));
     }
 
     sqlx::query("UPDATE users SET points = points + $1 WHERE id = $2")
@@ -994,7 +1047,9 @@ pub async fn record_admob_points(
     let _: Result<i64, _> = redis.incr(&daily_key, admob_pts).await;
     let _: Result<(), _> = redis.expire(&daily_key, 86400).await;
 
-    Ok(Json(json!({ "data": { "awarded": true, "points_awarded": admob_pts } })))
+    Ok(Json(
+        json!({ "data": { "awarded": true, "points_awarded": admob_pts } }),
+    ))
 }
 
 /// PUT /v1/users/me/fields — bulk update custom profile field values
@@ -1138,7 +1193,9 @@ pub async fn my_referrals(
     let data: Vec<_> = rows.into_iter().take(limit as usize).collect();
     let next_cursor = data.last().map(|r| r.id.to_string());
 
-    Ok(Json(json!({ "data": data, "meta": { "cursor": next_cursor, "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": data, "meta": { "cursor": next_cursor, "has_more": has_more } }),
+    ))
 }
 
 /// GET /v1/users/me/inviters — Get users who invited me (PHP: get_invites.php)
@@ -1174,7 +1231,10 @@ pub async fn skip_onboarding_step(
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let valid = ["start_up_info", "startup_image", "startup_follow"];
     if !valid.contains(&req.step.as_str()) {
-        return Err(ApiError::BadRequest(format!("step must be one of: {}", valid.join(", "))));
+        return Err(ApiError::BadRequest(format!(
+            "step must be one of: {}",
+            valid.join(", ")
+        )));
     }
 
     // Store skip status in privacy_settings JSONB to avoid dynamic SQL
@@ -1308,7 +1368,8 @@ pub async fn get_general_data(
                 .fetch_all(&state.db)
                 .await
                 .unwrap_or_default();
-                let tag_data: Vec<_> = tags.into_iter()
+                let tag_data: Vec<_> = tags
+                    .into_iter()
                     .map(|(id, tag, count)| json!({"id": id, "tag": tag, "use_count": count}))
                     .collect();
                 result.insert("trending_hashtag".into(), json!(tag_data));
@@ -1320,7 +1381,8 @@ pub async fn get_general_data(
                 .fetch_all(&state.db)
                 .await
                 .unwrap_or_default();
-                let ann_data: Vec<_> = items.into_iter()
+                let ann_data: Vec<_> = items
+                    .into_iter()
                     .map(|(id, content)| json!({"id": id, "content": content}))
                     .collect();
                 result.insert("announcement".into(), json!(ann_data));
@@ -1373,7 +1435,9 @@ pub async fn contact_us(
     Json(req): Json<ContactRequest>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     if req.name.trim().is_empty() || req.email.trim().is_empty() || req.message.trim().is_empty() {
-        return Err(ApiError::BadRequest("name, email, message are required".into()));
+        return Err(ApiError::BadRequest(
+            "name, email, message are required".into(),
+        ));
     }
 
     // Store in sent_emails as a contact message
@@ -1381,8 +1445,16 @@ pub async fn contact_us(
         "INSERT INTO sent_emails (subject, body, recipient_count, sent_by)
          VALUES ($1, $2, 0, NULL)",
     )
-    .bind(format!("Contact: {}", req.subject.as_deref().unwrap_or(&req.name)))
-    .bind(format!("From: {} <{}>\n\n{}", req.name.trim(), req.email.trim(), req.message.trim()))
+    .bind(format!(
+        "Contact: {}",
+        req.subject.as_deref().unwrap_or(&req.name)
+    ))
+    .bind(format!(
+        "From: {} <{}>\n\n{}",
+        req.name.trim(),
+        req.email.trim(),
+        req.message.trim()
+    ))
     .execute(&state.db)
     .await?;
 
@@ -1396,7 +1468,11 @@ pub async fn request_verification(
     Json(req): Json<serde_json::Value>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let message = req["message"].as_str().unwrap_or("").trim().to_string();
-    let document_url = req["document_url"].as_str().unwrap_or("").trim().to_string();
+    let document_url = req["document_url"]
+        .as_str()
+        .unwrap_or("")
+        .trim()
+        .to_string();
     let full_name = req["full_name"].as_str().unwrap_or("").trim().to_string();
 
     if document_url.is_empty() {
@@ -1415,5 +1491,7 @@ pub async fn request_verification(
     .execute(&state.db)
     .await?;
 
-    Ok(Json(json!({ "data": { "submitted": true, "status": "pending" } })))
+    Ok(Json(
+        json!({ "data": { "submitted": true, "status": "pending" } }),
+    ))
 }

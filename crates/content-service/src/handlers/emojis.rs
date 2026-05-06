@@ -5,9 +5,9 @@
 //! grouped by category. The response is safe to cache aggressively on the
 //! client — emojis change rarely.
 
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{auth::AppState, errors::ApiError};
 use sqlx::FromRow;
 

@@ -4,7 +4,9 @@ use async_trait::async_trait;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
-use super::{AiError, AiProvider, Capability, GenOpts, GenResult, ImgOpts, ImgResult, ProviderKind};
+use super::{
+    AiError, AiProvider, Capability, GenOpts, GenResult, ImgOpts, ImgResult, ProviderKind,
+};
 
 #[derive(Clone)]
 pub struct OpenAiProvider {
@@ -216,7 +218,11 @@ impl AiProvider for OpenAiProvider {
             message: e.to_string(),
         })?;
 
-        let urls: Vec<String> = parsed.data.into_iter().filter_map(|d| d.url.or(d.b64_json)).collect();
+        let urls: Vec<String> = parsed
+            .data
+            .into_iter()
+            .filter_map(|d| d.url.or(d.b64_json))
+            .collect();
 
         Ok(ImgResult {
             urls,
@@ -224,4 +230,59 @@ impl AiProvider for OpenAiProvider {
             model: self.model_image.clone(),
         })
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// Moderation
+// ═══════════════════════════════════════════════════════════════════
+
+#[derive(Debug, serde::Deserialize)]
+pub struct ModerationResult {
+    pub flagged: bool,
+    pub categories: std::collections::HashMap<String, bool>,
+    pub category_scores: std::collections::HashMap<String, f64>,
+}
+
+pub async fn moderate_text(
+    client: &reqwest::Client,
+    api_key: &str,
+    text: &str,
+) -> Result<ModerationResult, String> {
+    let body = serde_json::json!({
+        "model": "omni-moderation-latest",
+        "input": text,
+    });
+
+    let resp = client
+        .post("https://api.openai.com/v1/moderations")
+        .header("Authorization", format!("Bearer {}", api_key))
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("OpenAI moderation request failed: {}", e))?;
+
+    if !resp.status().is_success() {
+        let status = resp.status();
+        let body = resp.text().await.unwrap_or_default();
+        return Err(format!("OpenAI moderation error {}: {}", status, body));
+    }
+
+    let json: serde_json::Value = resp.json().await.map_err(|e| e.to_string())?;
+    let result = &json["results"][0];
+
+    let categories: std::collections::HashMap<String, bool> = result["categories"]
+        .as_object()
+        .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.as_bool().unwrap_or(false))).collect())
+        .unwrap_or_default();
+
+    let category_scores: std::collections::HashMap<String, f64> = result["category_scores"]
+        .as_object()
+        .map(|obj| obj.iter().filter_map(|(k, v)| v.as_f64().map(|s| (k.clone(), s))).collect())
+        .unwrap_or_default();
+
+    Ok(ModerationResult {
+        flagged: result["flagged"].as_bool().unwrap_or(false),
+        categories,
+        category_scores,
+    })
 }

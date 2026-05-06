@@ -1,7 +1,7 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use serde::Deserialize;
 use shared::{
-    auth::{encode_access_token, hash_token, AppState},
+    auth::{AppState, encode_access_token, hash_token},
     errors::ApiError,
     models::User,
 };
@@ -42,30 +42,36 @@ pub async fn refresh_token(
     .await?
     .ok_or(ApiError::Unauthorized)?;
 
-    sqlx::query("DELETE FROM sessions WHERE id = $1")
-        .bind(session.id)
-        .execute(&state.db)
-        .await?;
-
     let access_token = encode_access_token(
         user.id,
         user.uuid,
         user.is_admin,
+        user.is_moderator,
         &state.config.jwt_secret,
     )?;
 
     let new_refresh = Uuid::new_v4().to_string();
     let new_hash = hash_token(&new_refresh);
-    let expires_at =
-        time::OffsetDateTime::now_utc() + time::Duration::days(30);
+    let expires_at = time::OffsetDateTime::now_utc() + time::Duration::days(30);
 
-    sqlx::query("INSERT INTO sessions (user_id, token_hash, platform, expires_at) VALUES ($1, $2, $3, $4)")
-        .bind(user.id)
-        .bind(&new_hash)
-        .bind(&session.platform)
-        .bind(expires_at)
-        .execute(&state.db)
+    let mut tx = state.db.begin().await?;
+
+    sqlx::query("DELETE FROM sessions WHERE id = $1")
+        .bind(session.id)
+        .execute(&mut *tx)
         .await?;
+
+    sqlx::query(
+        "INSERT INTO sessions (user_id, token_hash, platform, expires_at) VALUES ($1, $2, $3, $4)",
+    )
+    .bind(user.id)
+    .bind(&new_hash)
+    .bind(&session.platform)
+    .bind(expires_at)
+    .execute(&mut *tx)
+    .await?;
+
+    tx.commit().await?;
 
     Ok(Json(serde_json::json!({
         "data": {

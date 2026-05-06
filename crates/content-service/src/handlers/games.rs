@@ -1,9 +1,9 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::Serialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -45,7 +45,9 @@ pub async fn list_games(
     let has_more = games.len() as i64 > limit;
     let games: Vec<_> = games.into_iter().take(limit as usize).collect();
 
-    Ok(Json(json!({ "data": games, "meta": { "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": games, "meta": { "has_more": has_more } }),
+    ))
 }
 
 /// GET /v1/games/{id} — get a single game by ID

@@ -1,0 +1,95 @@
+app = "jungle-api-gateway"
+primary_region = "mad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  SERVER_HOST = "0.0.0.0"
+  SERVER_PORT = "8080"
+  RUST_LOG = "info,sqlx=warn"
+  # Internal service URLs (all point to same VM in consolidated mode)
+  AUTH_SERVICE_URL = "http://localhost:3001"
+  USER_SERVICE_URL = "http://localhost:3002"
+  POST_SERVICE_URL = "http://localhost:3003"
+  MESSAGING_SERVICE_URL = "http://localhost:3004"
+  MEDIA_SERVICE_URL = "http://localhost:3005"
+  NOTIFICATION_SERVICE_URL = "http://localhost:3006"
+  GROUP_PAGE_SERVICE_URL = "http://localhost:3007"
+  CONTENT_SERVICE_URL = "http://localhost:3008"
+  COMMERCE_SERVICE_URL = "http://localhost:3009"
+  ADMIN_SERVICE_URL = "http://localhost:3010"
+  PAYMENT_SERVICE_URL = "http://localhost:3011"
+  REALTIME_SERVICE_URL = "http://localhost:3012"
+  AI_SERVICE_URL = "http://localhost:3013"
+  LIVE_SERVICE_URL = "http://localhost:3014"
+
+[processes]
+  app = "api-gateway"
+
+[[services]]
+  protocol = "tcp"
+  internal_port = 8080
+  processes = ["app"]
+
+  [services.concurrency]
+    type = "connections"
+    hard_limit = 2000
+    soft_limit = 1500
+
+  [[services.ports]]
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.http_checks]]
+    interval = "15s"
+    timeout = "5s"
+    grace_period = "30s"
+    method = "get"
+    path = "/health"
+    protocol = "http"
+
+# ───────────────────────────────────────────────────────────────────
+# Production secrets — deploy with: fly secrets import < backend/.env
+# ───────────────────────────────────────────────────────────────────
+# All sensitive values below are set via `fly secrets set KEY=VALUE`.
+#
+# Required secrets (set before first deploy):
+#   DATABASE_URL            Neon PostgreSQL connection string
+#   REDIS_URL               Redis Cloud connection string
+#   JWT_SECRET              Random 64-byte hex
+#   JWT_REFRESH_SECRET      Random 64-byte hex
+#   INTERNAL_SERVICE_KEY    Random 32-byte hex
+#   OPENAI_API_KEY          OpenAI API key
+#   OPENAI_MODERATION_MODEL omni-moderation-latest
+#   OCR_SPACE_API_KEY       OCR.space free API key
+#   CLOUDFLARE_ACCOUNT_ID   Cloudflare account ID
+#   CLOUDFLARE_AI_TOKEN     Cloudflare Workers AI token
+#   TURNSTILE_SECRET_KEY    Cloudflare Turnstile secret
+#   STRIPE_SECRET_KEY       Stripe secret key
+#   SMTP_HOST               smtp-relay.brevo.com
+#   SMTP_PORT               587
+#   SMTP_USERNAME           Brevo SMTP login
+#   SMTP_PASSWORD           Brevo SMTP key
+#   SMTP_ENCRYPTION         starttls
+#   VAPID_PRIVATE_KEY       Web Push VAPID private key
+#   VAPID_PUBLIC_KEY        Web Push VAPID public key
+#   STORAGE_PROVIDER        r2
+#   S3_ENDPOINT             Cloudflare R2 endpoint
+#   S3_BUCKET               jungle
+#   S3_REGION               auto
+#   S3_ACCESS_KEY           R2 access key
+#   S3_SECRET_KEY           R2 secret key
+#   S3_PUBLIC_URL           R2 public URL
+#   FRONTEND_URL            https://jungle.com
+#   ALLOWED_ORIGINS         https://jungle.com,https://admin.jungle.com
+# ───────────────────────────────────────────────────────────────────
+
+# ── Metrics (Prometheus) ──────────────────────────────────────────
+[metrics]
+  port = 9090
+  path = "/metrics"

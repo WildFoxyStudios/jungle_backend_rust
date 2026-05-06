@@ -6,8 +6,8 @@ use sqlx::PgPool;
 use std::sync::Arc;
 
 use super::{
-    anthropic::AnthropicProvider, gemini::GeminiProvider, openai::OpenAiProvider, AiError,
-    AiProvider, Capability, ProviderKind,
+    AiError, AiProvider, Capability, ProviderKind, anthropic::AnthropicProvider,
+    gemini::GeminiProvider, openai::OpenAiProvider,
 };
 use crate::crypto;
 

@@ -1,15 +1,27 @@
 use axum::{
     extract::{
-        ws::{Message, WebSocket, WebSocketUpgrade},
         Query, State,
+        ws::{Message, WebSocket, WebSocketUpgrade},
     },
     response::IntoResponse,
 };
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
-use shared::auth::AppState;
+use shared::{auth::AppState, metrics::REALTIME_WS_LIFECYCLE};
+use sqlx::FromRow;
+use std::collections::HashSet;
+use std::sync::Arc;
+use tokio::sync::Mutex;
 
 use crate::hub::{ConnectionHub, WsMessage};
+
+#[derive(Debug, FromRow)]
+struct CallerInfo {
+    username: String,
+    first_name: String,
+    last_name: String,
+    avatar: String,
+}
 
 #[derive(Debug, Deserialize)]
 pub struct WsQuery {
@@ -30,23 +42,29 @@ pub async fn ws_handler(
             return axum::response::Response::builder()
                 .status(401)
                 .body(axum::body::Body::from("Unauthorized"))
-                .unwrap()
+                .unwrap_or_else(|e| {
+                    axum::response::Response::builder()
+                        .status(500)
+                        .body(axum::body::Body::from(format!("Error: {}", e)))
+                        .unwrap()
+                })
                 .into_response();
         }
     };
 
-    ws.on_upgrade(move |socket| handle_socket(socket, user_id, hub))
+    ws.on_upgrade(move |socket| handle_socket(socket, user_id, state, hub))
 }
 
-async fn handle_socket(socket: WebSocket, user_id: i64, hub: ConnectionHub) {
-    let (mut sender, mut receiver) = socket.split();
+async fn handle_socket(socket: WebSocket, user_id: i64, state: AppState, hub: ConnectionHub) {
+    let (sender, mut receiver) = socket.split();
+    let sender = Arc::new(Mutex::new(sender));
 
-    // Subscribe to user's channel
-    let mut rx = hub.subscribe(user_id);
+    // Auto-subscribe to the user's personal channel.
+    let mut rx_user = hub.subscribe(user_id);
 
     tracing::info!(user_id, "WebSocket connected");
 
-    // Broadcast join event
+    // Greeting frame.
     hub.send_to_user(
         user_id,
         WsMessage {
@@ -55,24 +73,76 @@ async fn handle_socket(socket: WebSocket, user_id: i64, hub: ConnectionHub) {
         },
     );
 
-    // Task: forward hub messages → WebSocket
-    let hub_clone = hub.clone();
-    let send_task = tokio::spawn(async move {
-        while let Ok(msg) = rx.recv().await {
+    // Track topics this socket is subscribed to so we can clean up on disconnect.
+    let topics: Arc<Mutex<HashSet<String>>> = Arc::new(Mutex::new(HashSet::new()));
+
+    // Forward user-channel messages → WebSocket.
+    let sender_user = sender.clone();
+    let user_send_task = tokio::spawn(async move {
+        while let Ok(msg) = rx_user.recv().await {
             let text = serde_json::to_string(&msg).unwrap_or_default();
-            if sender.send(Message::Text(text.into())).await.is_err() {
+            let mut s = sender_user.lock().await;
+            if s.send(Message::Text(text.into())).await.is_err() {
                 break;
             }
         }
     });
 
-    // Task: read WebSocket messages → process
+    // Read frames → process subscribe/unsubscribe + relay events.
+    let hub_clone = hub.clone();
+    let state_clone = state.clone();
+    let topics_clone = topics.clone();
+    let sender_recv = sender.clone();
     let recv_task = tokio::spawn(async move {
         while let Some(Ok(msg)) = receiver.next().await {
             match msg {
                 Message::Text(text) => {
-                    if let Ok(ws_msg) = serde_json::from_str::<WsMessage>(&text) {
-                        process_client_message(user_id, &hub_clone, ws_msg).await;
+                    let Ok(ws_msg) = serde_json::from_str::<WsMessage>(&text) else {
+                        continue;
+                    };
+                    match ws_msg.event.as_str() {
+                        "subscribe" => {
+                            let Some(topic) = ws_msg.data.get("topic").and_then(|v| v.as_str())
+                            else {
+                                continue;
+                            };
+                            if !topic_is_allowed(user_id, topic) {
+                                continue;
+                            }
+                            let already = {
+                                let mut t = topics_clone.lock().await;
+                                !t.insert(topic.to_string())
+                            };
+                            if already {
+                                continue;
+                            }
+                            let mut rx_topic = hub_clone.subscribe_topic(topic);
+                            let sender_topic = sender_recv.clone();
+                            let topic_owned = topic.to_string();
+                            tokio::spawn(async move {
+                                while let Ok(m) = rx_topic.recv().await {
+                                    let text = serde_json::to_string(&m).unwrap_or_default();
+                                    let mut s = sender_topic.lock().await;
+                                    if s.send(Message::Text(text.into())).await.is_err() {
+                                        break;
+                                    }
+                                }
+                                tracing::trace!(topic = %topic_owned, "topic forwarder ended");
+                            });
+                        }
+                        "unsubscribe" => {
+                            if let Some(topic) = ws_msg.data.get("topic").and_then(|v| v.as_str()) {
+                                let mut t = topics_clone.lock().await;
+                                t.remove(topic);
+                                // Best-effort cleanup; the spawned forwarder
+                                // will exit naturally when the broadcast
+                                // channel closes (no senders / no receivers).
+                                hub_clone.maybe_drop_topic(topic);
+                            }
+                        }
+                        _ => {
+                            process_client_message(user_id, &state_clone, &hub_clone, ws_msg).await;
+                        }
                     }
                 }
                 Message::Close(_) => break,
@@ -81,17 +151,49 @@ async fn handle_socket(socket: WebSocket, user_id: i64, hub: ConnectionHub) {
         }
     });
 
-    // Wait for either task to finish
     tokio::select! {
-        _ = send_task => {},
+        _ = user_send_task => {},
         _ = recv_task => {},
     }
 
+    let topic_names: Vec<String> = topics.lock().await.drain().collect();
+    for t in &topic_names {
+        hub.maybe_drop_topic(t);
+    }
+
     hub.unsubscribe(user_id);
+    REALTIME_WS_LIFECYCLE.with_label_values(&["disconnect"]).inc();
     tracing::info!(user_id, "WebSocket disconnected");
 }
 
-async fn process_client_message(user_id: i64, hub: &ConnectionHub, msg: WsMessage) {
+/// Topic ACL: limit which topics a given user is allowed to subscribe to.
+/// `user:N` only allowed for the same user. `feed:home` is the user's own
+/// feed; everything else is currently allowed (live rooms, group walls, …).
+fn topic_is_allowed(user_id: i64, topic: &str) -> bool {
+    if let Some(rest) = topic.strip_prefix("user:") {
+        return rest.parse::<i64>().ok() == Some(user_id);
+    }
+    if topic == "feed:home" || topic.starts_with("feed:") {
+        return true;
+    }
+    if topic.starts_with("live:")
+        || topic.starts_with("group:")
+        || topic.starts_with("page:")
+        || topic.starts_with("post:")
+        || topic.starts_with("conversation:")
+    {
+        return true;
+    }
+    tracing::debug!(user_id, topic, "rejecting subscribe to unknown topic");
+    false
+}
+
+async fn process_client_message(
+    user_id: i64,
+    state: &AppState,
+    hub: &ConnectionHub,
+    msg: WsMessage,
+) {
     match msg.event.as_str() {
         "typing" | "typing.start" => {
             if let Some(to_id) = msg.data["to_user_id"].as_i64() {
@@ -140,8 +242,56 @@ async fn process_client_message(user_id: i64, hub: &ConnectionHub, msg: WsMessag
                 );
             }
         }
-        "call_offer" | "call_answer" | "call_ice_candidate" | "call_end" => {
-            // WebRTC signaling relay
+        // WebRTC signaling
+        "call_offer" => {
+            // Caller announces a new call. We enrich with the caller's public
+            // identity so the callee UI can render name + avatar directly.
+            if let Some(to_id) = msg.data["to_user_id"].as_i64() {
+                let room = msg.data.get("room").cloned().unwrap_or_default();
+                let sdp = msg.data.get("sdp").cloned().unwrap_or_default();
+                let audio_only = msg
+                    .data
+                    .get("audio_only")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+
+                let caller = sqlx::query_as::<_, CallerInfo>(
+                    "SELECT username, first_name, last_name, avatar FROM users WHERE id = $1",
+                )
+                .bind(user_id)
+                .fetch_optional(&state.db)
+                .await
+                .ok()
+                .flatten();
+
+                let caller_json = caller
+                    .map(|c| {
+                        serde_json::json!({
+                            "id": user_id,
+                            "username": c.username,
+                            "first_name": c.first_name,
+                            "last_name": c.last_name,
+                            "avatar": c.avatar,
+                        })
+                    })
+                    .unwrap_or_else(|| serde_json::json!({ "id": user_id }));
+
+                hub.send_to_user(
+                    to_id,
+                    WsMessage {
+                        event: "call.incoming".into(),
+                        data: serde_json::json!({
+                            "room": room,
+                            "caller": caller_json,
+                            "audio_only": audio_only,
+                            "sdp": sdp,
+                        }),
+                    },
+                );
+            }
+        }
+        "call_answer" | "call_ice_candidate" | "call_end" => {
+            // Simple relay: the callee/caller echo back negotiation messages.
             if let Some(to_id) = msg.data["to_user_id"].as_i64() {
                 hub.send_to_user(
                     to_id,
@@ -149,7 +299,9 @@ async fn process_client_message(user_id: i64, hub: &ConnectionHub, msg: WsMessag
                         event: msg.event.clone(),
                         data: serde_json::json!({
                             "from_user_id": user_id,
-                            "payload": msg.data.get("payload")
+                            "room": msg.data.get("room"),
+                            "sdp": msg.data.get("sdp"),
+                            "candidate": msg.data.get("candidate"),
                         }),
                     },
                 );
@@ -162,7 +314,7 @@ async fn process_client_message(user_id: i64, hub: &ConnectionHub, msg: WsMessag
 }
 
 fn verify_ws_token(state: &AppState, token: &str) -> Option<i64> {
-    use jsonwebtoken::{decode, DecodingKey, Validation};
+    use jsonwebtoken::{DecodingKey, Validation, decode};
     use shared::auth::Claims;
 
     let key = DecodingKey::from_secret(state.config.jwt_secret.as_bytes());

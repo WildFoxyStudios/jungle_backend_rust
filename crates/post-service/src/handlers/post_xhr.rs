@@ -14,12 +14,12 @@
 //! - POST   /v1/posts/audio                       — upload an audio blob as a post
 
 use axum::{
+    Json,
     extract::{Multipart, Path, Query, State},
     http::HeaderMap,
-    Json,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use shared::{
     auth::{AppState, AuthUser},
@@ -45,6 +45,57 @@ pub struct UrlPreview {
     pub embed_html: Option<String>,
 }
 
+
+fn is_private_ip(addr: &std::net::IpAddr) -> bool {
+    match addr {
+        std::net::IpAddr::V4(v4) => {
+            v4.is_loopback()
+                || v4.is_private()
+                || v4.is_link_local()
+                || v4.is_unspecified()
+        }
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || (v6.segments()[0] & 0xff00 == 0xfc00)
+                || (v6.segments()[0] & 0xffc0 == 0xfe80)
+        }
+    }
+}
+
+fn extract_host<'a>(url: &'a str) -> Option<&'a str> {
+    let rest = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))?;
+    Some(rest.split(&['/', '?', '#', ':'][..]).next().unwrap_or(""))
+}
+
+async fn is_internal_host(url_str: &str) -> bool {
+    let host = match extract_host(url_str) {
+        Some(h) if !h.is_empty() => h,
+        _ => return true,
+    };
+
+    if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+        return is_private_ip(&ip);
+    }
+
+    let port = if url_str.starts_with("https://") { 443 } else { 80 };
+    let addr_str = format!("{}:{}", host, port);
+
+    match tokio::net::lookup_host(&addr_str).await {
+        Ok(addrs) => {
+            for addr in addrs {
+                if is_private_ip(&addr.ip()) {
+                    return true;
+                }
+            }
+            false
+        }
+        Err(_) => false,
+    }
+}
+
 pub async fn preview_url(
     State(state): State<AppState>,
     _auth: AuthUser,
@@ -52,7 +103,16 @@ pub async fn preview_url(
 ) -> Result<Json<Value>, ApiError> {
     let url = req.url.trim();
     if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err(ApiError::BadRequest("url must start with http(s)://".into()));
+        return Err(ApiError::BadRequest(
+            "url must start with http(s)://".into(),
+        ));
+    }
+
+    // SSRF protection: block internal/private IP ranges
+    if is_internal_host(url).await {
+        return Err(ApiError::BadRequest(
+            "url resolves to a private or internal address".into(),
+        ));
     }
 
     let url_hash = {
@@ -93,7 +153,11 @@ pub async fn preview_url(
         .build()
         .map_err(|e| ApiError::Internal(format!("http builder: {}", e)))?;
 
-    let resp = client.get(url).send().await.map_err(|e| ApiError::BadRequest(format!("fetch: {}", e)))?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| ApiError::BadRequest(format!("fetch: {}", e)))?;
     let status = resp.status();
     let content_type = resp
         .headers()
@@ -113,7 +177,10 @@ pub async fn preview_url(
     let mut preview = UrlPreview {
         url: url.to_string(),
         title: extract_meta(&body, &["og:title", "twitter:title"]).or_else(|| extract_title(&body)),
-        description: extract_meta(&body, &["og:description", "description", "twitter:description"]),
+        description: extract_meta(
+            &body,
+            &["og:description", "description", "twitter:description"],
+        ),
         image_url: extract_meta(&body, &["og:image", "twitter:image"]),
         site_name: extract_meta(&body, &["og:site_name"]),
         embed_html: None,
@@ -185,7 +252,9 @@ fn extract_content_attr(tag: &str) -> Option<String> {
         let end = rest[1..].find('\'')?;
         Some(rest[1..=end].to_string())
     } else {
-        let end = rest.find(|c: char| c.is_whitespace() || c == '>').unwrap_or(rest.len());
+        let end = rest
+            .find(|c: char| c.is_whitespace() || c == '>')
+            .unwrap_or(rest.len());
         Some(rest[..end].to_string())
     }
 }
@@ -210,7 +279,10 @@ fn youtube_embed(url: &str) -> String {
     let id = if let Some(pos) = url.find("v=") {
         url[pos + 2..].split(&['&', '#'][..]).next().unwrap_or("")
     } else if let Some(pos) = url.find("youtu.be/") {
-        url[pos + 9..].split(&['?', '#', '/'][..]).next().unwrap_or("")
+        url[pos + 9..]
+            .split(&['?', '#', '/'][..])
+            .next()
+            .unwrap_or("")
     } else {
         ""
     };
@@ -238,25 +310,22 @@ pub async fn delete_post_media(
     Path((post_id, media_id)): Path<(i64, i64)>,
 ) -> Result<Json<Value>, ApiError> {
     // Verify ownership
-    let owner: Option<i64> = sqlx::query_scalar(
-        "SELECT user_id FROM posts WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(post_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let owner: Option<i64> =
+        sqlx::query_scalar("SELECT user_id FROM posts WHERE id = $1 AND deleted_at IS NULL")
+            .bind(post_id)
+            .fetch_optional(&state.db)
+            .await?;
 
     let owner = owner.ok_or(ApiError::NotFound("post not found".into()))?;
     if owner != auth.user_id && !auth.is_admin {
         return Err(ApiError::Forbidden("not post owner".into()));
     }
 
-    let result = sqlx::query(
-        "DELETE FROM post_media WHERE id = $1 AND post_id = $2",
-    )
-    .bind(media_id)
-    .bind(post_id)
-    .execute(&state.db)
-    .await?;
+    let result = sqlx::query("DELETE FROM post_media WHERE id = $1 AND post_id = $2")
+        .bind(media_id)
+        .bind(post_id)
+        .execute(&state.db)
+        .await?;
 
     if result.rows_affected() == 0 {
         return Err(ApiError::NotFound("media not found in post".into()));
@@ -280,12 +349,11 @@ pub async fn set_comments_status(
     Path(post_id): Path<i64>,
     Json(req): Json<CommentsStatusRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    let owner: Option<i64> = sqlx::query_scalar(
-        "SELECT user_id FROM posts WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(post_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let owner: Option<i64> =
+        sqlx::query_scalar("SELECT user_id FROM posts WHERE id = $1 AND deleted_at IS NULL")
+            .bind(post_id)
+            .fetch_optional(&state.db)
+            .await?;
 
     let owner = owner.ok_or(ApiError::NotFound("post not found".into()))?;
     if owner != auth.user_id && !auth.is_admin {
@@ -312,12 +380,11 @@ pub async fn mark_sold(
     auth: AuthUser,
     Path(post_id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    let row: Option<(i64, Option<String>)> = sqlx::query_as(
-        "SELECT user_id, post_type FROM posts WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(post_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let row: Option<(i64, Option<String>)> =
+        sqlx::query_as("SELECT user_id, post_type FROM posts WHERE id = $1 AND deleted_at IS NULL")
+            .bind(post_id)
+            .fetch_optional(&state.db)
+            .await?;
 
     let (owner, post_type) = row.ok_or(ApiError::NotFound("post not found".into()))?;
     if owner != auth.user_id && !auth.is_admin {
@@ -325,9 +392,14 @@ pub async fn mark_sold(
     }
 
     // Only product-type posts can be marked sold
-    let is_product = matches!(post_type.as_deref(), Some("product") | Some("sale") | Some("marketplace"));
+    let is_product = matches!(
+        post_type.as_deref(),
+        Some("product") | Some("sale") | Some("marketplace")
+    );
     if !is_product {
-        return Err(ApiError::BadRequest("only product posts can be marked sold".into()));
+        return Err(ApiError::BadRequest(
+            "only product posts can be marked sold".into(),
+        ));
     }
 
     sqlx::query("UPDATE posts SET is_sold = TRUE WHERE id = $1")
@@ -347,12 +419,11 @@ pub async fn notify_followers(
     auth: AuthUser,
     Path(post_id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    let owner: Option<i64> = sqlx::query_scalar(
-        "SELECT user_id FROM posts WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(post_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let owner: Option<i64> =
+        sqlx::query_scalar("SELECT user_id FROM posts WHERE id = $1 AND deleted_at IS NULL")
+            .bind(post_id)
+            .fetch_optional(&state.db)
+            .await?;
 
     let owner = owner.ok_or(ApiError::NotFound("post not found".into()))?;
     if owner != auth.user_id {
@@ -373,7 +444,9 @@ pub async fn notify_followers(
     .unwrap_or(false);
 
     if already {
-        return Err(ApiError::Conflict("followers already notified for this post".into()));
+        return Err(ApiError::Conflict(
+            "followers already notified for this post".into(),
+        ));
     }
 
     let affected = sqlx::query(
@@ -439,7 +512,9 @@ pub async fn video_view(
         .fetch_one(&state.db)
         .await?;
 
-    Ok(Json(json!({ "data": { "counted": inserted > 0, "total_views": total } })))
+    Ok(Json(
+        json!({ "data": { "counted": inserted > 0, "total_views": total } }),
+    ))
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -496,7 +571,9 @@ pub async fn toggle_wonder(
         .fetch_one(&state.db)
         .await?;
 
-    Ok(Json(json!({ "data": { "wondered": !existed, "wonder_count": total } })))
+    Ok(Json(
+        json!({ "data": { "wondered": !existed, "wonder_count": total } }),
+    ))
 }
 
 // ═══════════════════════════════════════════════════════════════════
@@ -603,13 +680,25 @@ pub async fn create_audio_post(
     let mut audio_bytes: Option<Vec<u8>> = None;
     let mut audio_mime: Option<String> = None;
 
-    while let Some(field) = multipart.next_field().await.map_err(|e| ApiError::BadRequest(e.to_string()))? {
+    while let Some(field) = multipart
+        .next_field()
+        .await
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?
+    {
         let name = field.name().unwrap_or("").to_string();
         if name == "text" {
-            text = Some(field.text().await.map_err(|e| ApiError::BadRequest(e.to_string()))?);
+            text = Some(
+                field
+                    .text()
+                    .await
+                    .map_err(|e| ApiError::BadRequest(e.to_string()))?,
+            );
         } else if name == "audio" {
             audio_mime = field.content_type().map(|s| s.to_string());
-            let data = field.bytes().await.map_err(|e| ApiError::BadRequest(e.to_string()))?;
+            let data = field
+                .bytes()
+                .await
+                .map_err(|e| ApiError::BadRequest(e.to_string()))?;
             if data.len() > MAX_BYTES {
                 return Err(ApiError::BadRequest("audio > 10 MB".into()));
             }

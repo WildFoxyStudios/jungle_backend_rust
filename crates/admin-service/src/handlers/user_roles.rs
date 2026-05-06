@@ -4,12 +4,14 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use shared::{auth::AppState, errors::ApiError};
+use shared::{auth::{AppState, AuthUser}, errors::ApiError, permissions::Permission};
 
 pub async fn make_admin(
     State(state): State<AppState>,
+    auth: AuthUser,
     Path(user_id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ManageUsers, &state).await?;
     let result = sqlx::query("UPDATE users SET is_admin = TRUE WHERE id = $1 AND deleted_at IS NULL")
         .bind(user_id)
         .execute(&state.db)
@@ -24,8 +26,10 @@ pub async fn make_admin(
 
 pub async fn remove_admin(
     State(state): State<AppState>,
+    auth: AuthUser,
     Path(user_id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ManageUsers, &state).await?;
     sqlx::query("UPDATE users SET is_admin = FALSE WHERE id = $1")
         .bind(user_id)
         .execute(&state.db)
@@ -42,9 +46,11 @@ pub struct MakeProRequest {
 
 pub async fn make_pro(
     State(state): State<AppState>,
+    auth: AuthUser,
     Path(user_id): Path<i64>,
     Json(req): Json<MakeProRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ManagePro, &state).await?;
     let days = req.days.unwrap_or(30);
     let plan = req.plan_type.as_deref().unwrap_or("star");
 
@@ -66,8 +72,10 @@ pub async fn make_pro(
 
 pub async fn remove_pro(
     State(state): State<AppState>,
+    auth: AuthUser,
     Path(user_id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ManagePro, &state).await?;
     sqlx::query(
         "UPDATE users SET is_pro = FALSE, pro_type = NULL, pro_expires_at = NULL WHERE id = $1",
     )

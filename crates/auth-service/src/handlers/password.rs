@@ -1,12 +1,17 @@
 use argon2::{PasswordHasher, PasswordVerifier};
-use axum::{extract::State, Json};
+use axum::{
+    Json,
+    extract::{ConnectInfo, State},
+    http::HeaderMap,
+};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use sha2::Digest;
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
 };
+use std::net::SocketAddr;
 use uuid::Uuid;
 
 #[derive(Debug, Deserialize)]
@@ -21,9 +26,20 @@ pub struct ResetPasswordRequest {
 }
 
 pub async fn forgot_password(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    _headers: HeaderMap,
     State(state): State<AppState>,
     Json(req): Json<ForgotPasswordRequest>,
 ) -> Result<Json<Value>, ApiError> {
+    // Rate limit: 3 requests per IP per 15 minutes (prevent enumeration / spam)
+    shared::rate_limit::RateLimiter::check(
+        &mut state.redis.clone(),
+        &format!("rl:pwd_forgot:{}", peer.ip()),
+        3,
+        900,
+    )
+    .await?;
+
     // Always respond success to prevent email enumeration
     let user = sqlx::query_scalar::<_, i64>(
         "SELECT id FROM users WHERE email = $1 AND deleted_at IS NULL",
@@ -36,13 +52,11 @@ pub async fn forgot_password(
         let token = Uuid::new_v4().to_string();
         let token_hash = format!("{:x}", sha2::Sha256::digest(token.as_bytes()));
 
-        sqlx::query(
-            "UPDATE users SET email_code = $1 WHERE id = $2",
-        )
-        .bind(&token_hash)
-        .bind(user_id)
-        .execute(&state.db)
-        .await?;
+        sqlx::query("UPDATE users SET email_code = $1 WHERE id = $2")
+            .bind(&token_hash)
+            .bind(user_id)
+            .execute(&state.db)
+            .await?;
 
         // Store token in Redis with 1h expiry
         let mut redis = state.redis.clone();
@@ -54,8 +68,8 @@ pub async fn forgot_password(
             .query_async(&mut redis)
             .await;
 
-        let frontend_url = std::env::var("FRONTEND_URL")
-            .unwrap_or_else(|_| "http://localhost:3000".into());
+        let frontend_url =
+            std::env::var("FRONTEND_URL").unwrap_or_else(|_| "http://localhost:3000".into());
         let reset_link = format!("{}/reset-password?token={}", frontend_url, token);
         let site_name = std::env::var("SITE_NAME").unwrap_or_else(|_| "Jungle".into());
         let (subject, html_body) =
@@ -66,15 +80,30 @@ pub async fn forgot_password(
         }
     }
 
-    Ok(Json(json!({ "data": { "message": "If the email exists, a reset link has been sent" } })))
+    Ok(Json(
+        json!({ "data": { "message": "If the email exists, a reset link has been sent" } }),
+    ))
 }
 
 pub async fn reset_password(
+    ConnectInfo(peer): ConnectInfo<SocketAddr>,
+    _headers: HeaderMap,
     State(state): State<AppState>,
     Json(req): Json<ResetPasswordRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    if req.password.len() < 6 {
-        return Err(ApiError::BadRequest("Password must be at least 6 characters".into()));
+    // Rate limit: 5 attempts per IP per 15 minutes (brute force protection)
+    shared::rate_limit::RateLimiter::check(
+        &mut state.redis.clone(),
+        &format!("rl:pwd_reset:{}", peer.ip()),
+        5,
+        900,
+    )
+    .await?;
+
+    if req.password.len() < 8 {
+        return Err(ApiError::BadRequest(
+            "Password must be at least 8 characters".into(),
+        ));
     }
 
     let token_hash = format!("{:x}", sha2::Sha256::digest(req.token.as_bytes()));
@@ -90,7 +119,8 @@ pub async fn reset_password(
     let user_id = user_id.ok_or_else(|| ApiError::BadRequest("Invalid or expired token".into()))?;
 
     // Hash new password
-    let salt = argon2::password_hash::SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
+    let salt =
+        argon2::password_hash::SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
     let hash = argon2::Argon2::default()
         .hash_password(req.password.as_bytes(), &salt)
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -114,7 +144,9 @@ pub async fn reset_password(
         .execute(&state.db)
         .await?;
 
-    Ok(Json(json!({ "data": { "message": "Password reset successfully" } })))
+    Ok(Json(
+        json!({ "data": { "message": "Password reset successfully" } }),
+    ))
 }
 
 /// PUT /v1/auth/password — Change password while authenticated (PHP: update_user_password.php)
@@ -130,16 +162,17 @@ pub async fn change_password(
     Json(req): Json<ChangePasswordRequest>,
 ) -> Result<Json<Value>, ApiError> {
     if req.new_password.len() < 8 {
-        return Err(ApiError::BadRequest("New password must be at least 8 characters".into()));
+        return Err(ApiError::BadRequest(
+            "New password must be at least 8 characters".into(),
+        ));
     }
 
-    let hash: Option<String> = sqlx::query_scalar(
-        "SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(auth.user_id)
-    .fetch_optional(&state.db)
-    .await?
-    .ok_or_else(|| ApiError::NotFound("User not found".into()))?;
+    let hash: Option<String> =
+        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL")
+            .bind(auth.user_id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| ApiError::NotFound("User not found".into()))?;
 
     let hash = hash.filter(|s| !s.is_empty()).ok_or_else(|| {
         ApiError::BadRequest(
@@ -156,7 +189,8 @@ pub async fn change_password(
         .map_err(|_| ApiError::BadRequest("Current password is incorrect".into()))?;
 
     // Hash new password
-    let salt = argon2::password_hash::SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
+    let salt =
+        argon2::password_hash::SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
     let new_hash = argon2::Argon2::default()
         .hash_password(req.new_password.as_bytes(), &salt)
         .map_err(|e| ApiError::Internal(e.to_string()))?
@@ -170,7 +204,7 @@ pub async fn change_password(
         .execute(&mut *tx)
         .await?;
 
-    // Revoke all other sessions (keep current session valid)
+    // Revoke all sessions on password change (security best practice)
     sqlx::query("DELETE FROM sessions WHERE user_id = $1")
         .bind(auth.user_id)
         .execute(&mut *tx)
@@ -178,7 +212,9 @@ pub async fn change_password(
 
     tx.commit().await?;
 
-    Ok(Json(json!({ "data": { "changed": true, "message": "Password changed successfully" } })))
+    Ok(Json(
+        json!({ "data": { "changed": true, "message": "Password changed successfully" } }),
+    ))
 }
 
 // ─── Social-login password setter ───────────────────────────────────────────
@@ -205,29 +241,27 @@ pub async fn set_social_password(
         ));
     }
 
-    let current_hash: Option<Option<String>> = sqlx::query_scalar(
-        "SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL",
-    )
-    .bind(auth.user_id)
-    .fetch_optional(&state.db)
-    .await?;
+    let current_hash: Option<Option<String>> =
+        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = $1 AND deleted_at IS NULL")
+            .bind(auth.user_id)
+            .fetch_optional(&state.db)
+            .await?;
 
     let current_hash = current_hash.ok_or_else(|| ApiError::NotFound("User not found".into()))?;
 
     // If a password is already set, reject — they must use `change_password`
     // instead, which requires knowing the existing password.
-    if let Some(h) = current_hash.as_ref() {
-        if !h.is_empty() {
-            return Err(ApiError::Conflict(
-                "Account already has a password. Use PUT /v1/auth/password instead.".into(),
-            ));
-        }
+    if let Some(h) = current_hash.as_ref()
+        && !h.is_empty()
+    {
+        return Err(ApiError::Conflict(
+            "Account already has a password. Use PUT /v1/auth/password instead.".into(),
+        ));
     }
 
     // Hash + store the new password.
-    let salt = argon2::password_hash::SaltString::generate(
-        &mut argon2::password_hash::rand_core::OsRng,
-    );
+    let salt =
+        argon2::password_hash::SaltString::generate(&mut argon2::password_hash::rand_core::OsRng);
     let new_hash = argon2::Argon2::default()
         .hash_password(req.new_password.as_bytes(), &salt)
         .map_err(|e| ApiError::Internal(e.to_string()))?

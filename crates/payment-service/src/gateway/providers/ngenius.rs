@@ -3,8 +3,8 @@ use rust_decimal::Decimal;
 use std::collections::HashMap;
 
 use crate::gateway::{
-    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus,
-    PaymentStatusKind, RefundResult, WebhookEvent,
+    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
+    RefundResult, WebhookEvent,
 };
 
 pub struct NGeniusGateway {
@@ -43,7 +43,9 @@ impl NGeniusGateway {
         result["access_token"]
             .as_str()
             .map(|s| s.to_string())
-            .ok_or_else(|| PaymentError::ProviderError("Failed to get N-Genius access token".into()))
+            .ok_or_else(|| {
+                PaymentError::ProviderError("Failed to get N-Genius access token".into())
+            })
     }
 }
 
@@ -89,7 +91,10 @@ impl PaymentGateway for NGeniusGateway {
 
         if let Some(errors) = result.get("errors") {
             return Err(PaymentError::ProviderError(
-                errors[0]["message"].as_str().unwrap_or("N-Genius error").to_string(),
+                errors[0]["message"]
+                    .as_str()
+                    .unwrap_or("N-Genius error")
+                    .to_string(),
             ));
         }
 
@@ -140,13 +145,19 @@ impl PaymentGateway for NGeniusGateway {
             amount: result["amount"]["value"]
                 .as_i64()
                 .map(|a| Decimal::from(a) / Decimal::from(100)),
-            currency: result["amount"]["currencyCode"].as_str().map(|s| s.to_string()),
+            currency: result["amount"]["currencyCode"]
+                .as_str()
+                .map(|s| s.to_string()),
         })
     }
 
-    async fn handle_webhook(&self, payload: &[u8], _signature: &str) -> Result<WebhookEvent, PaymentError> {
-        let body: serde_json::Value =
-            serde_json::from_slice(payload).map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+    async fn handle_webhook(
+        &self,
+        payload: &[u8],
+        _signature: &str,
+    ) -> Result<WebhookEvent, PaymentError> {
+        let body: serde_json::Value = serde_json::from_slice(payload)
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         let event_name = body["eventName"].as_str().unwrap_or("").to_string();
         let order = &body["order"];
@@ -165,12 +176,18 @@ impl PaymentGateway for NGeniusGateway {
             amount: order["amount"]["value"]
                 .as_i64()
                 .map(|a| Decimal::from(a) / Decimal::from(100)),
-            currency: order["amount"]["currencyCode"].as_str().map(|s| s.to_string()),
+            currency: order["amount"]["currencyCode"]
+                .as_str()
+                .map(|s| s.to_string()),
             metadata: HashMap::new(),
         })
     }
 
-    async fn refund(&self, order_ref: &str, amount: Option<Decimal>) -> Result<RefundResult, PaymentError> {
+    async fn refund(
+        &self,
+        order_ref: &str,
+        amount: Option<Decimal>,
+    ) -> Result<RefundResult, PaymentError> {
         let token = self.get_access_token().await?;
 
         // Get the payment reference first
@@ -197,7 +214,10 @@ impl PaymentGateway for NGeniusGateway {
 
         let mut body = serde_json::json!({});
         if let Some(amt) = amount {
-            let minor = (amt * Decimal::from(100)).to_string().parse::<i64>().unwrap_or(0);
+            let minor = (amt * Decimal::from(100))
+                .to_string()
+                .parse::<i64>()
+                .unwrap_or(0);
             body["amount"] = serde_json::json!({ "value": minor });
         }
 
@@ -213,7 +233,9 @@ impl PaymentGateway for NGeniusGateway {
         let result: serde_json::Value = resp.json().await?;
 
         if result["state"].as_str() == Some("FAILED") {
-            return Err(PaymentError::RefundFailed("N-Genius refund failed".to_string()));
+            return Err(PaymentError::RefundFailed(
+                "N-Genius refund failed".to_string(),
+            ));
         }
 
         Ok(RefundResult {

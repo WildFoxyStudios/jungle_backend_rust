@@ -1,6 +1,6 @@
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -157,10 +157,12 @@ pub async fn react_to_blog_comment(
         .execute(&state.db)
         .await?;
 
-        sqlx::query("UPDATE blog_comments SET like_count = GREATEST(like_count - 1, 0) WHERE id = $1")
-            .bind(id)
-            .execute(&state.db)
-            .await?;
+        sqlx::query(
+            "UPDATE blog_comments SET like_count = GREATEST(like_count - 1, 0) WHERE id = $1",
+        )
+        .bind(id)
+        .execute(&state.db)
+        .await?;
 
         Ok(Json(json!({ "data": { "liked": false } })))
     } else {

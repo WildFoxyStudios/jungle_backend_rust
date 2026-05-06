@@ -5,13 +5,13 @@
 //! `admin_audit_log` after the handler runs. Sensitive fields are redacted.
 
 use axum::{
-    body::{to_bytes, Body, Bytes},
+    body::{Body, Bytes, to_bytes},
     extract::{Request, State},
-    http::{header, HeaderMap, Method},
+    http::{HeaderMap, Method, header},
     middleware::Next,
     response::Response,
 };
-use jsonwebtoken::{decode, DecodingKey, Validation};
+use jsonwebtoken::{DecodingKey, Validation, decode};
 use serde_json::Value;
 use sqlx::PgPool;
 
@@ -33,18 +33,17 @@ const REDACT_KEYS: &[&str] = &[
 ];
 
 /// Axum middleware that records every admin mutation.
-pub async fn audit_admin(
-    State(app_state): State<AppState>,
-    req: Request,
-    next: Next,
-) -> Response {
+pub async fn audit_admin(State(app_state): State<AppState>, req: Request, next: Next) -> Response {
     let method = req.method().clone();
     let uri = req.uri().clone();
     let path = uri.path().to_string();
 
     // Only care about mutating verbs on /v1/admin/*
     let is_admin_mutation = path.starts_with("/v1/admin/")
-        && matches!(method, Method::POST | Method::PUT | Method::PATCH | Method::DELETE);
+        && matches!(
+            method,
+            Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+        );
 
     if !is_admin_mutation {
         return next.run(req).await;
@@ -123,21 +122,25 @@ fn extract_admin_id(
     let mut validation = Validation::default();
     validation.set_required_spec_claims(&["exp", "iat"]);
 
-    let data = decode::<Claims>(token, &DecodingKey::from_secret(primary.as_bytes()), &validation)
-        .or_else(|e| {
-            // On failure, attempt the previous secret as a rotation fallback
-            // (covers un-kid'd legacy tokens).
-            if let Some(prev) = jwt_secret_previous {
-                decode::<Claims>(
-                    token,
-                    &DecodingKey::from_secret(prev.as_bytes()),
-                    &validation,
-                )
-            } else {
-                Err(e)
-            }
-        })
-        .ok()?;
+    let data = decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(primary.as_bytes()),
+        &validation,
+    )
+    .or_else(|e| {
+        // On failure, attempt the previous secret as a rotation fallback
+        // (covers un-kid'd legacy tokens).
+        if let Some(prev) = jwt_secret_previous {
+            decode::<Claims>(
+                token,
+                &DecodingKey::from_secret(prev.as_bytes()),
+                &validation,
+            )
+        } else {
+            Err(e)
+        }
+    })
+    .ok()?;
 
     if data.claims.is_admin {
         Some(data.claims.sub)

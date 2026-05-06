@@ -1,9 +1,9 @@
 use axum::{
-    extract::{Multipart, Path, Query, State},
     Json,
+    extract::{Multipart, Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -127,7 +127,9 @@ pub async fn list_blogs(
     let blogs: Vec<_> = blogs.into_iter().take(limit as usize).collect();
     let next_cursor = blogs.last().map(|b| b.id.to_string());
 
-    Ok(Json(json!({ "data": blogs, "meta": { "cursor": next_cursor, "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": blogs, "meta": { "cursor": next_cursor, "has_more": has_more } }),
+    ))
 }
 
 pub async fn create_blog(
@@ -169,11 +171,12 @@ pub async fn get_blog(
         .execute(&state.db)
         .await?;
 
-    let blog = sqlx::query_as::<_, BlogRow>("SELECT * FROM blogs WHERE id = $1 AND is_approved = TRUE")
-        .bind(id)
-        .fetch_optional(&state.db)
-        .await?
-        .ok_or_else(|| ApiError::NotFound("Blog not found".into()))?;
+    let blog =
+        sqlx::query_as::<_, BlogRow>("SELECT * FROM blogs WHERE id = $1 AND is_approved = TRUE")
+            .bind(id)
+            .fetch_optional(&state.db)
+            .await?
+            .ok_or_else(|| ApiError::NotFound("Blog not found".into()))?;
 
     Ok(Json(json!({ "data": blog })))
 }
@@ -282,9 +285,7 @@ pub async fn my_blogs(
     Ok(Json(json!({ "data": blogs })))
 }
 
-pub async fn list_categories(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, ApiError> {
+pub async fn list_categories(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let cats = sqlx::query_as::<_, CategoryRow>(
         "SELECT id, name_key, slug FROM categories WHERE type = 'blog' AND active = TRUE ORDER BY sort_order",
     )
@@ -321,7 +322,9 @@ pub async fn list_comments(
     let has_more = comments.len() as i64 > limit;
     let comments: Vec<_> = comments.into_iter().take(limit as usize).collect();
 
-    Ok(Json(json!({ "data": comments, "meta": { "has_more": has_more } })))
+    Ok(Json(
+        json!({ "data": comments, "meta": { "has_more": has_more } }),
+    ))
 }
 
 pub async fn add_comment(
@@ -393,10 +396,7 @@ pub async fn upload_blog_image(
             continue;
         }
 
-        let file_name = field
-            .file_name()
-            .unwrap_or("upload.jpg")
-            .to_string();
+        let file_name = field.file_name().unwrap_or("upload.jpg").to_string();
 
         let data = field
             .bytes()
@@ -407,10 +407,7 @@ pub async fn upload_blog_image(
             return Err(ApiError::BadRequest("Image exceeds 10MB limit".into()));
         }
 
-        let ext = file_name
-            .rsplit('.')
-            .next()
-            .unwrap_or("jpg");
+        let ext = file_name.rsplit('.').next().unwrap_or("jpg");
         let unique_name = format!("{}.{ext}", uuid::Uuid::new_v4());
         let upload_dir = std::env::var("UPLOAD_DIR").unwrap_or_else(|_| "./uploads".into());
         let dir_path = format!("{upload_dir}/blogs");
@@ -428,5 +425,7 @@ pub async fn upload_blog_image(
         return Ok(Json(json!({ "data": { "url": url } })));
     }
 
-    Err(ApiError::BadRequest("No image field found in multipart".into()))
+    Err(ApiError::BadRequest(
+        "No image field found in multipart".into(),
+    ))
 }

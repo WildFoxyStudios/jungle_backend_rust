@@ -1,4 +1,4 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use shared::auth::AppState;
 
 pub async fn health_check(State(state): State<AppState>) -> Json<serde_json::Value> {

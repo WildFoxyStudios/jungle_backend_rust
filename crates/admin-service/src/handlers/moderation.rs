@@ -4,7 +4,7 @@ use axum::{
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
-use shared::{auth::{AppState, AuthUser}, errors::ApiError};
+use shared::{auth::{AppState, AuthUser}, errors::ApiError, permissions::Permission};
 
 #[derive(Debug, Deserialize)]
 pub struct PendingQuery {
@@ -145,9 +145,7 @@ pub async fn admin_delete_post(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    if !auth.is_admin {
-        return Err(ApiError::Forbidden("".into()));
-    }
+    auth.require_permission(Permission::ModerateReports, &state).await?;
 
     // Soft delete with timestamp
     let result = sqlx::query("UPDATE posts SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL")

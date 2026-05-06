@@ -14,11 +14,11 @@
 //!   DELETE /v1/story-highlights/{id}/stories/{sid}     — remove item from highlight
 
 use axum::{
-    extract::{Path, Query, State},
     Json,
+    extract::{Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -92,7 +92,8 @@ pub async fn create_highlight(
     auth: AuthUser,
     Json(req): Json<CreateHighlightRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    req.validate().map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    req.validate()
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
 
     let mut tx = state.db.begin().await?;
 
@@ -110,12 +111,8 @@ pub async fn create_highlight(
     .await?;
 
     if !req.story_media_ids.is_empty() {
-        let owned_ids = filter_owned_story_media(
-            &mut *tx,
-            auth.user_id,
-            &req.story_media_ids,
-        )
-        .await?;
+        let owned_ids =
+            filter_owned_story_media(&mut *tx, auth.user_id, &req.story_media_ids).await?;
 
         for (idx, sm_id) in owned_ids.iter().enumerate() {
             sqlx::query(
@@ -248,7 +245,8 @@ pub async fn update_highlight(
     Path(id): Path<i64>,
     Json(req): Json<UpdateHighlightRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    req.validate().map_err(|e| ApiError::BadRequest(e.to_string()))?;
+    req.validate()
+        .map_err(|e| ApiError::BadRequest(e.to_string()))?;
     verify_owner(&state, id, auth.user_id).await?;
 
     let updated = sqlx::query_as::<_, HighlightRow>(

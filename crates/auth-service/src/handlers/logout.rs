@@ -1,7 +1,7 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use serde::Deserialize;
 use shared::{
-    auth::{hash_token, AppState},
+    auth::{AppState, hash_token},
     errors::ApiError,
 };
 

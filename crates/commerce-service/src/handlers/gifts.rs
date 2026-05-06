@@ -1,9 +1,9 @@
 use axum::{
-    extract::{Path, State},
     Json,
+    extract::{Path, State},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -21,9 +21,7 @@ pub struct GiftRow {
     pub is_active: bool,
 }
 
-pub async fn list_gifts(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, ApiError> {
+pub async fn list_gifts(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let gifts = sqlx::query_as::<_, GiftRow>(
         "SELECT id, category_id, name, image, price, is_active FROM gifts WHERE is_active = TRUE ORDER BY id ASC",
     )
@@ -33,9 +31,7 @@ pub async fn list_gifts(
     Ok(Json(json!({ "data": gifts })))
 }
 
-pub async fn list_gift_categories(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, ApiError> {
+pub async fn list_gift_categories(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let cats = sqlx::query_as::<_, (i64, String, i32)>(
         "SELECT id, name, sort_order FROM gift_categories WHERE is_active = TRUE ORDER BY sort_order ASC",
     )
@@ -74,13 +70,12 @@ pub async fn send_gift(
     let price = gift.1;
 
     // Deduct from wallet
-    let result = sqlx::query(
-        "UPDATE users SET wallet = wallet - $1 WHERE id = $2 AND wallet >= $1",
-    )
-    .bind(price)
-    .bind(auth.user_id)
-    .execute(&state.db)
-    .await?;
+    let result =
+        sqlx::query("UPDATE users SET wallet = wallet - $1 WHERE id = $2 AND wallet >= $1")
+            .bind(price)
+            .bind(auth.user_id)
+            .execute(&state.db)
+            .await?;
 
     if result.rows_affected() == 0 {
         return Err(ApiError::BadRequest("Insufficient wallet balance".into()));
@@ -97,14 +92,27 @@ pub async fn send_gift(
     .fetch_one(&state.db)
     .await?;
 
-    Ok(Json(json!({ "data": { "id": id, "price_deducted": price } })))
+    Ok(Json(
+        json!({ "data": { "id": id, "price_deducted": price } }),
+    ))
 }
 
 pub async fn my_received_gifts(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
-    let rows = sqlx::query_as::<_, (i64, i64, String, String, String, Option<String>, OffsetDateTime)>(
+    let rows = sqlx::query_as::<
+        _,
+        (
+            i64,
+            i64,
+            String,
+            String,
+            String,
+            Option<String>,
+            OffsetDateTime,
+        ),
+    >(
         r#"SELECT ug.id, ug.sender_id, u.username, g.name, g.image, ug.message, ug.created_at
         FROM user_gifts ug
         JOIN users u ON u.id = ug.sender_id
@@ -119,13 +127,15 @@ pub async fn my_received_gifts(
 
     let data: Vec<Value> = rows
         .into_iter()
-        .map(|(id, sender_id, username, gift_name, gift_image, message, created_at)| {
-            json!({
-                "id": id, "sender_id": sender_id, "sender_username": username,
-                "gift_name": gift_name, "gift_image": gift_image,
-                "message": message, "created_at": created_at.to_string()
-            })
-        })
+        .map(
+            |(id, sender_id, username, gift_name, gift_image, message, created_at)| {
+                json!({
+                    "id": id, "sender_id": sender_id, "sender_username": username,
+                    "gift_name": gift_name, "gift_image": gift_image,
+                    "message": message, "created_at": created_at.to_string()
+                })
+            },
+        )
         .collect();
 
     Ok(Json(json!({ "data": data })))
@@ -143,9 +153,7 @@ pub struct StickerPackRow {
     pub is_active: bool,
 }
 
-pub async fn list_sticker_packs(
-    State(state): State<AppState>,
-) -> Result<Json<Value>, ApiError> {
+pub async fn list_sticker_packs(State(state): State<AppState>) -> Result<Json<Value>, ApiError> {
     let packs = sqlx::query_as::<_, StickerPackRow>(
         "SELECT id, name, preview_url, is_premium, price, is_active FROM sticker_packs WHERE is_active = TRUE ORDER BY id ASC",
     )
@@ -179,7 +187,9 @@ pub async fn get_sticker_pack(
         .map(|(sid, url, sort)| json!({ "id": sid, "image_url": url, "sort_order": sort }))
         .collect();
 
-    Ok(Json(json!({ "data": { "pack": pack, "stickers": sticker_data } })))
+    Ok(Json(
+        json!({ "data": { "pack": pack, "stickers": sticker_data } }),
+    ))
 }
 
 pub async fn purchase_sticker_pack(
@@ -197,13 +207,12 @@ pub async fn purchase_sticker_pack(
 
     if pack.1 {
         // Premium — deduct from wallet
-        let result = sqlx::query(
-            "UPDATE users SET wallet = wallet - $1 WHERE id = $2 AND wallet >= $1",
-        )
-        .bind(pack.0)
-        .bind(auth.user_id)
-        .execute(&state.db)
-        .await?;
+        let result =
+            sqlx::query("UPDATE users SET wallet = wallet - $1 WHERE id = $2 AND wallet >= $1")
+                .bind(pack.0)
+                .bind(auth.user_id)
+                .execute(&state.db)
+                .await?;
 
         if result.rows_affected() == 0 {
             return Err(ApiError::BadRequest("Insufficient wallet balance".into()));

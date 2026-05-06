@@ -5,24 +5,24 @@ use sqlx::PgPool;
 use std::time::Duration;
 use time::OffsetDateTime;
 
+use crate::cron;
+
 pub async fn run(pool: PgPool) {
-    // Check every 15 minutes; only act on Monday 09:00 UTC.
     let check_every = Duration::from_secs(15 * 60);
     loop {
         let now = OffsetDateTime::now_utc();
-        let is_monday_9 = now.weekday().number_from_monday() == 1
-            && now.hour() == 9
-            && now.minute() < 15;
+        let is_monday_9 =
+            now.weekday().number_from_monday() == 1 && now.hour() == 9 && now.minute() < 15;
 
         if is_monday_9 {
-            match run_once(&pool).await {
-                Ok(count) if count > 0 => {
-                    tracing::info!(users_notified = count, "weekly_memories_digest: queued");
+            cron::tracked(&pool, "weekly_memories_digest", || async {
+                let n = run_once(&pool).await.map_err(|e| e.to_string())?;
+                if n > 0 {
+                    tracing::info!(users_notified = n, "weekly_memories_digest: queued");
                 }
-                Ok(_) => {}
-                Err(e) => tracing::error!(error = %e, "weekly_memories_digest failed"),
-            }
-            // Sleep a full hour to avoid double-running in the same window
+                Ok(format!("notified {}", n))
+            })
+            .await;
             tokio::time::sleep(Duration::from_secs(3600)).await;
             continue;
         }
@@ -32,7 +32,6 @@ pub async fn run(pool: PgPool) {
 }
 
 async fn run_once(pool: &PgPool) -> Result<u64, sqlx::Error> {
-    // Users with posts made exactly 1, 2 or 3 years ago this week
     let result = sqlx::query(
         r#"
         INSERT INTO notifications (recipient_id, sender_id, type, text)

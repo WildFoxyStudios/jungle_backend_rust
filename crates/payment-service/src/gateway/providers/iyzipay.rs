@@ -5,8 +5,8 @@ use sha2::Sha256;
 use std::collections::HashMap;
 
 use crate::gateway::{
-    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus,
-    PaymentStatusKind, RefundResult, WebhookEvent,
+    PaymentError, PaymentGateway, PaymentParams, PaymentSession, PaymentStatus, PaymentStatusKind,
+    RefundResult, WebhookEvent,
 };
 
 type HmacSha256 = Hmac<Sha256>;
@@ -36,18 +36,21 @@ impl IyzipayGateway {
 
     fn generate_auth_header(&self, uri: &str, body: &str) -> String {
         let random_header = uuid::Uuid::new_v4().to_string().replace('-', "")[..8].to_string();
-        let hash_str = format!("{}{}{}{}", self.api_key, random_header, self.secret_key, body);
-        let mut mac = HmacSha256::new_from_slice(self.secret_key.as_bytes()).unwrap();
+        let hash_str = format!(
+            "{}{}{}{}",
+            self.api_key, random_header, self.secret_key, body
+        );
+        let Ok(mut mac) = HmacSha256::new_from_slice(self.secret_key.as_bytes()) else {
+            tracing::error!("Iyzipay generate_auth_header: HMAC key invalid");
+            return String::new();
+        };
         mac.update(hash_str.as_bytes());
         let signature = base64::Engine::encode(
             &base64::engine::general_purpose::STANDARD,
             mac.finalize().into_bytes(),
         );
         let _ = uri;
-        format!(
-            "IYZWS {}:{}",
-            self.api_key, signature
-        )
+        format!("IYZWS {}:{}", self.api_key, signature)
     }
 }
 
@@ -104,11 +107,17 @@ impl PaymentGateway for IyzipayGateway {
         });
 
         let body_str = body.to_string();
-        let auth = self.generate_auth_header("/payment/iyzipos/checkoutform/initialize/auth/ecom", &body_str);
+        let auth = self.generate_auth_header(
+            "/payment/iyzipos/checkoutform/initialize/auth/ecom",
+            &body_str,
+        );
 
         let resp = self
             .client
-            .post(format!("{}/payment/iyzipos/checkoutform/initialize/auth/ecom", self.base_url))
+            .post(format!(
+                "{}/payment/iyzipos/checkoutform/initialize/auth/ecom",
+                self.base_url
+            ))
             .header("Authorization", auth)
             .header("Content-Type", "application/json")
             .body(body_str)
@@ -119,14 +128,20 @@ impl PaymentGateway for IyzipayGateway {
 
         if result["status"].as_str() != Some("success") {
             return Err(PaymentError::ProviderError(
-                result["errorMessage"].as_str().unwrap_or("Iyzipay error").to_string(),
+                result["errorMessage"]
+                    .as_str()
+                    .unwrap_or("Iyzipay error")
+                    .to_string(),
             ));
         }
 
         Ok(PaymentSession {
             provider: "iyzipay".into(),
             session_id: result["token"].as_str().unwrap_or("").to_string(),
-            redirect_url: result["checkoutFormContent"].as_str().unwrap_or("").to_string(),
+            redirect_url: result["checkoutFormContent"]
+                .as_str()
+                .unwrap_or("")
+                .to_string(),
             provider_ref: Some(conversation_id),
         })
     }
@@ -134,11 +149,15 @@ impl PaymentGateway for IyzipayGateway {
     async fn verify_payment(&self, token: &str) -> Result<PaymentStatus, PaymentError> {
         let body = serde_json::json!({ "token": token });
         let body_str = body.to_string();
-        let auth = self.generate_auth_header("/payment/iyzipos/checkoutform/auth/ecom/detail", &body_str);
+        let auth =
+            self.generate_auth_header("/payment/iyzipos/checkoutform/auth/ecom/detail", &body_str);
 
         let resp = self
             .client
-            .post(format!("{}/payment/iyzipos/checkoutform/auth/ecom/detail", self.base_url))
+            .post(format!(
+                "{}/payment/iyzipos/checkoutform/auth/ecom/detail",
+                self.base_url
+            ))
             .header("Authorization", auth)
             .header("Content-Type", "application/json")
             .body(body_str)
@@ -161,9 +180,13 @@ impl PaymentGateway for IyzipayGateway {
         })
     }
 
-    async fn handle_webhook(&self, payload: &[u8], _signature: &str) -> Result<WebhookEvent, PaymentError> {
-        let body: serde_json::Value =
-            serde_json::from_slice(payload).map_err(|e| PaymentError::ProviderError(e.to_string()))?;
+    async fn handle_webhook(
+        &self,
+        payload: &[u8],
+        _signature: &str,
+    ) -> Result<WebhookEvent, PaymentError> {
+        let body: serde_json::Value = serde_json::from_slice(payload)
+            .map_err(|e| PaymentError::ProviderError(e.to_string()))?;
 
         let token = body["token"].as_str().unwrap_or("").to_string();
         let status = match body["status"].as_str() {
@@ -182,7 +205,11 @@ impl PaymentGateway for IyzipayGateway {
         })
     }
 
-    async fn refund(&self, payment_id: &str, amount: Option<Decimal>) -> Result<RefundResult, PaymentError> {
+    async fn refund(
+        &self,
+        payment_id: &str,
+        amount: Option<Decimal>,
+    ) -> Result<RefundResult, PaymentError> {
         let body = serde_json::json!({
             "paymentTransactionId": payment_id,
             "price": amount.unwrap_or(Decimal::ZERO).to_string(),
@@ -205,7 +232,10 @@ impl PaymentGateway for IyzipayGateway {
 
         if result["status"].as_str() != Some("success") {
             return Err(PaymentError::RefundFailed(
-                result["errorMessage"].as_str().unwrap_or("Refund failed").to_string(),
+                result["errorMessage"]
+                    .as_str()
+                    .unwrap_or("Refund failed")
+                    .to_string(),
             ));
         }
 

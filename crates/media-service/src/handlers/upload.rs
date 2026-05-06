@@ -1,9 +1,9 @@
 use axum::{
-    extract::{Multipart, Path, Query, State},
     Json,
+    extract::{Multipart, Path, Query, State},
 };
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
@@ -13,9 +13,26 @@ use sqlx::FromRow;
 use time::OffsetDateTime;
 
 const MAX_FILE_SIZE: u64 = 50 * 1024 * 1024; // 50 MB
-const ALLOWED_IMAGE_TYPES: &[&str] = &["image/jpeg", "image/png", "image/gif", "image/webp", "image/svg+xml"];
-const ALLOWED_VIDEO_TYPES: &[&str] = &["video/mp4", "video/webm", "video/quicktime", "video/x-msvideo"];
-const ALLOWED_AUDIO_TYPES: &[&str] = &["audio/mpeg", "audio/ogg", "audio/wav", "audio/webm", "audio/mp4"];
+const ALLOWED_IMAGE_TYPES: &[&str] = &[
+    "image/jpeg",
+    "image/png",
+    "image/gif",
+    "image/webp",
+    "image/svg+xml",
+];
+const ALLOWED_VIDEO_TYPES: &[&str] = &[
+    "video/mp4",
+    "video/webm",
+    "video/quicktime",
+    "video/x-msvideo",
+];
+const ALLOWED_AUDIO_TYPES: &[&str] = &[
+    "audio/mpeg",
+    "audio/ogg",
+    "audio/wav",
+    "audio/webm",
+    "audio/mp4",
+];
 
 #[derive(Debug, Serialize, FromRow)]
 pub struct MediaRow {
@@ -55,10 +72,7 @@ pub async fn upload_media(
         .map_err(|e| ApiError::BadRequest(format!("Multipart error: {}", e)))?
     {
         if field.name() == Some("file") {
-            file_name = field
-                .file_name()
-                .unwrap_or("unknown")
-                .to_string();
+            file_name = field.file_name().unwrap_or("unknown").to_string();
             content_type = field
                 .content_type()
                 .unwrap_or("application/octet-stream")
@@ -86,10 +100,7 @@ pub async fn upload_media(
     validate_mime(&content_type, &file_type)?;
 
     // Generate unique filename
-    let ext = file_name
-        .rsplit('.')
-        .next()
-        .unwrap_or("bin");
+    let ext = file_name.rsplit('.').next().unwrap_or("bin");
     let unique_name = format!(
         "{}/{}/{}.{}",
         file_type,
@@ -131,12 +142,13 @@ pub async fn upload_media(
     let file_size = upload_data.len() as i64;
 
     if file_type == "image"
-        && let Ok(thumb) = crate::processing::generate_thumbnail(&data, 200) {
-            let thumb_key = format!("thumbnails/{}/{}.jpg", auth.user_id, uuid::Uuid::new_v4());
-            if let Ok(thumb_url) = storage.upload(&thumb_key, &thumb.data, "image/jpeg").await {
-                thumbnail_url = Some(thumb_url);
-            }
+        && let Ok(thumb) = crate::processing::generate_thumbnail(&data, 200)
+    {
+        let thumb_key = format!("thumbnails/{}/{}.jpg", auth.user_id, uuid::Uuid::new_v4());
+        if let Ok(thumb_url) = storage.upload(&thumb_key, &thumb.data, "image/jpeg").await {
+            thumbnail_url = Some(thumb_url);
         }
+    }
 
     if file_type == "video" {
         let tmp_dir = std::env::temp_dir();
@@ -147,9 +159,13 @@ pub async fn upload_media(
             if let Ok(dur) = crate::video::get_video_duration(&tmp_video).await {
                 duration = Some(dur);
             }
-            if crate::video::generate_video_thumbnail(&tmp_video, &tmp_thumb).await.is_ok() {
+            if crate::video::generate_video_thumbnail(&tmp_video, &tmp_thumb)
+                .await
+                .is_ok()
+            {
                 if let Ok(thumb_data) = tokio::fs::read(&tmp_thumb).await {
-                    let thumb_key = format!("thumbnails/{}/{}.jpg", auth.user_id, uuid::Uuid::new_v4());
+                    let thumb_key =
+                        format!("thumbnails/{}/{}.jpg", auth.user_id, uuid::Uuid::new_v4());
                     if let Ok(url) = storage.upload(&thumb_key, &thumb_data, "image/jpeg").await {
                         thumbnail_url = Some(url);
                     }
@@ -197,10 +213,7 @@ pub async fn upload_avatar(
         .map_err(|e| ApiError::BadRequest(format!("Multipart error: {}", e)))?
     {
         if field.name() == Some("avatar") {
-            content_type = field
-                .content_type()
-                .unwrap_or("image/jpeg")
-                .to_string();
+            content_type = field.content_type().unwrap_or("image/jpeg").to_string();
 
             if !ALLOWED_IMAGE_TYPES.contains(&content_type.as_str()) {
                 return Err(ApiError::BadRequest("Avatar must be an image".into()));
@@ -231,7 +244,9 @@ pub async fn upload_avatar(
     };
 
     let storage = shared::storage::create_storage().await;
-    let file_url = storage.upload(&unique_name, &upload_data, &content_type).await?;
+    let file_url = storage
+        .upload(&unique_name, &upload_data, &content_type)
+        .await?;
 
     sqlx::query("UPDATE users SET avatar = $1, updated_at = NOW() WHERE id = $2")
         .bind(&file_url)
@@ -266,10 +281,7 @@ pub async fn upload_cover(
         .map_err(|e| ApiError::BadRequest(format!("Multipart error: {}", e)))?
     {
         if field.name() == Some("cover") {
-            content_type = field
-                .content_type()
-                .unwrap_or("image/jpeg")
-                .to_string();
+            content_type = field.content_type().unwrap_or("image/jpeg").to_string();
 
             if !ALLOWED_IMAGE_TYPES.contains(&content_type.as_str()) {
                 return Err(ApiError::BadRequest("Cover must be an image".into()));
@@ -300,7 +312,9 @@ pub async fn upload_cover(
     };
 
     let storage = shared::storage::create_storage().await;
-    let file_url = storage.upload(&unique_name, &upload_data, &content_type).await?;
+    let file_url = storage
+        .upload(&unique_name, &upload_data, &content_type)
+        .await?;
 
     sqlx::query("UPDATE users SET cover = $1, updated_at = NOW() WHERE id = $2")
         .bind(&file_url)
@@ -354,9 +368,10 @@ pub async fn delete_media(
         return Err(ApiError::Forbidden("".into()));
     }
 
-    // Delete file from storage
-    let file_path = media.file_url.trim_start_matches('/');
-    tokio::fs::remove_file(file_path).await.ok();
+    // Delete file from storage (handles both local and cloud providers)
+    let storage = shared::storage::create_storage().await;
+    let key = extract_storage_key(&media.file_url);
+    let _ = storage.delete(&key).await;
 
     sqlx::query("DELETE FROM uploaded_media WHERE id = $1")
         .bind(id)
@@ -441,7 +456,10 @@ fn validate_mime(mime: &str, file_type: &str) -> Result<(), ApiError> {
     };
 
     if !allowed {
-        return Err(ApiError::BadRequest(format!("Unsupported file type: {}", mime)));
+        return Err(ApiError::BadRequest(format!(
+            "Unsupported file type: {}",
+            mime
+        )));
     }
     Ok(())
 }
@@ -459,4 +477,17 @@ fn mime_to_ext(mime: &str) -> &str {
         "audio/ogg" => "ogg",
         _ => "bin",
     }
+}
+
+/// Extract the storage key from a file URL so we can delete via any provider.
+fn extract_storage_key(url: &str) -> String {
+    if let Some(key) = url.strip_prefix("/uploads/") {
+        return key.to_string();
+    }
+    if let Some(rest) = url.split("://").nth(1) {
+        if let Some(slash) = rest.find('/') {
+            return rest[slash + 1..].to_string();
+        }
+    }
+    url.to_string()
 }

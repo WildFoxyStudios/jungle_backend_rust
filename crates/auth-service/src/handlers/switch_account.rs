@@ -1,8 +1,8 @@
-use axum::{extract::State, Json};
+use axum::{Json, extract::State};
 use serde::Deserialize;
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 use shared::{
-    auth::{encode_access_token, AppState, AuthUser},
+    auth::{AppState, AuthUser, encode_access_token},
     errors::ApiError,
 };
 
@@ -22,15 +22,15 @@ pub async fn switch_account(
     // Verify the user has permission to switch to target account.
     // Allowed if: (a) current user is admin, or (b) target account is
     // in the same "account family" (linked via parent_user_id).
-    let target = sqlx::query_as::<_, (i64, uuid::Uuid, bool)>(
-        r#"SELECT id, uuid, is_admin FROM users WHERE id = $1 AND is_active = TRUE"#,
+    let target = sqlx::query_as::<_, (i64, uuid::Uuid, bool, bool)>(
+        r#"SELECT id, uuid, is_admin, is_moderator FROM users WHERE id = $1 AND is_active = TRUE"#,
     )
     .bind(req.target_user_id)
     .fetch_optional(&state.db)
     .await?
     .ok_or_else(|| ApiError::NotFound("Target account not found".into()))?;
 
-    let (target_id, target_uuid, target_is_admin) = target;
+    let (target_id, target_uuid, target_is_admin, target_is_moderator) = target;
 
     // Permission check: admin can switch to anyone.
     // Regular users can only switch to accounts they administer (e.g., page admin).
@@ -51,7 +51,9 @@ pub async fn switch_account(
         .unwrap_or(false);
 
         if !is_page_admin && target_id != auth.user_id {
-            return Err(ApiError::Forbidden("Not authorized to switch to this account".into()));
+            return Err(ApiError::Forbidden(
+                "Not authorized to switch to this account".into(),
+            ));
         }
     }
 
@@ -59,6 +61,7 @@ pub async fn switch_account(
         target_id,
         target_uuid,
         target_is_admin,
+        target_is_moderator,
         &state.config.jwt_secret,
     )?;
 
@@ -67,7 +70,7 @@ pub async fn switch_account(
     let refresh_hash = shared::auth::hash_token(&refresh_token);
 
     sqlx::query(
-        r#"INSERT INTO sessions (user_id, refresh_token_hash, ip_address, user_agent, expires_at)
+        r#"INSERT INTO sessions (user_id, token_hash, ip_address, user_agent, expires_at)
            VALUES ($1, $2, 'switch', 'switch-account', NOW() + INTERVAL '30 days')"#,
     )
     .bind(target_id)

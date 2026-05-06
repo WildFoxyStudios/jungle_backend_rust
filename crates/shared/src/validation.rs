@@ -7,7 +7,8 @@ static USERNAME_REGEX: Lazy<Regex> = Lazy::new(|| Regex::new(r"^[a-zA-Z0-9_]{3,3
 pub fn validate_username(username: &str) -> Result<(), ValidationError> {
     if !USERNAME_REGEX.is_match(username) {
         let mut err = ValidationError::new("invalid_username");
-        err.message = Some("Username must be 3-32 characters, alphanumeric and underscores only".into());
+        err.message =
+            Some("Username must be 3-32 characters, alphanumeric and underscores only".into());
         return Err(err);
     }
     Ok(())

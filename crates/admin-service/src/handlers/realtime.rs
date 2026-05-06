@@ -4,7 +4,7 @@
 
 use axum::{extract::State, Json};
 use serde_json::{json, Value};
-use shared::{auth::{AppState, AuthUser}, errors::ApiError};
+use shared::{auth::{AppState, AuthUser}, errors::ApiError, permissions::Permission};
 
 /// GET /v1/admin/realtime/stats
 ///
@@ -18,8 +18,9 @@ use shared::{auth::{AppState, AuthUser}, errors::ApiError};
 /// - pending_jobs: background jobs in 'pending' status
 pub async fn realtime_stats(
     State(state): State<AppState>,
-    _auth: AuthUser,
+    auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
+    auth.require_permission(Permission::ViewDashboard, &state).await?;
     // Online users (distinct users with sessions updated in last 5 minutes)
     let online_users: i64 = sqlx::query_scalar(
         r#"

@@ -8,16 +8,10 @@ use shared::{
     auth::{AppState, AuthUser},
     errors::ApiError,
     pagination::PaginationParams,
+    permissions::Permission,
 };
 use sqlx::FromRow;
 use time::OffsetDateTime;
-
-fn require_admin(auth: &AuthUser) -> Result<(), ApiError> {
-    if !auth.is_admin {
-        return Err(ApiError::Forbidden("".into()));
-    }
-    Ok(())
-}
 
 // ── Genders ────────────────────────────────────────────────────────────────
 
@@ -33,7 +27,7 @@ pub async fn list_genders(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     let rows = sqlx::query_as::<_, GenderRow>(
         "SELECT id, gender_id, name, image FROM genders ORDER BY id ASC",
@@ -56,7 +50,7 @@ pub async fn create_gender(
     auth: AuthUser,
     Json(req): Json<GenderRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     let row = sqlx::query_as::<_, GenderRow>(
         "INSERT INTO genders (gender_id, name, image) VALUES ($1, $2, $3) RETURNING id, gender_id, name, image",
@@ -75,7 +69,7 @@ pub async fn update_gender(
     Path(id): Path<i64>,
     Json(req): Json<GenderRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     let result = sqlx::query(
         "UPDATE genders SET gender_id = $2, name = $3, image = $4 WHERE id = $1",
@@ -97,7 +91,7 @@ pub async fn delete_gender(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     let result = sqlx::query("DELETE FROM genders WHERE id = $1")
         .bind(id)
@@ -126,7 +120,7 @@ pub async fn list_sub_categories(
     auth: AuthUser,
     Query(params): Query<SubCategoryFilter>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     let rows = if let Some(cat_id) = params.category_id {
         sqlx::query_as::<_, SubCategoryRow>(
@@ -163,7 +157,7 @@ pub async fn create_sub_category(
     auth: AuthUser,
     Json(req): Json<SubCategoryRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     let row = sqlx::query_as::<_, SubCategoryRow>(
         "INSERT INTO sub_categories (category_id, lang_key, type) VALUES ($1, $2, $3) RETURNING id, category_id, lang_key, type, created_at",
@@ -182,7 +176,7 @@ pub async fn update_sub_category(
     Path(id): Path<i64>,
     Json(req): Json<SubCategoryRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     let result = sqlx::query(
         "UPDATE sub_categories SET category_id = $2, lang_key = $3, type = $4 WHERE id = $1",
@@ -204,7 +198,7 @@ pub async fn delete_sub_category(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     let result = sqlx::query("DELETE FROM sub_categories WHERE id = $1")
         .bind(id)
@@ -230,7 +224,7 @@ pub async fn list_terms_pages(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     let rows = sqlx::query_as::<_, TermsPageRow>(
         "SELECT id, type, text FROM terms_pages ORDER BY id ASC",
@@ -251,7 +245,7 @@ pub async fn update_terms_page(
     Path(id): Path<i64>,
     Json(req): Json<TermsPageUpdate>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     let result = sqlx::query("UPDATE terms_pages SET text = $2 WHERE id = $1")
         .bind(id)
@@ -282,7 +276,7 @@ pub async fn list_movies(
     auth: AuthUser,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePosts, &state).await?;
 
     let limit = params.limit();
     let cursor_id = params.cursor_id().unwrap_or(i64::MAX);
@@ -304,7 +298,7 @@ pub async fn approve_movie(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePosts, &state).await?;
 
     sqlx::query("UPDATE movies SET is_approved = TRUE WHERE id = $1")
         .bind(id)
@@ -318,7 +312,7 @@ pub async fn feature_movie(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePosts, &state).await?;
 
     sqlx::query("UPDATE movies SET admin_featured = NOT admin_featured WHERE id = $1")
         .bind(id)
@@ -332,7 +326,7 @@ pub async fn delete_movie(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePosts, &state).await?;
 
     sqlx::query("DELETE FROM movies WHERE id = $1")
         .bind(id)
@@ -356,7 +350,7 @@ pub async fn list_games(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePosts, &state).await?;
 
     let rows = sqlx::query_as::<_, GameAdminRow>(
         "SELECT id, name, game_link, is_active, created_at FROM games ORDER BY id DESC",
@@ -379,7 +373,7 @@ pub async fn create_game(
     auth: AuthUser,
     Json(req): Json<GameRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePosts, &state).await?;
 
     let id: i64 = sqlx::query_scalar(
         "INSERT INTO games (name, game_link, description, cover) VALUES ($1, $2, $3, $4) RETURNING id",
@@ -398,7 +392,7 @@ pub async fn toggle_game(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePosts, &state).await?;
 
     sqlx::query("UPDATE games SET is_active = NOT is_active WHERE id = $1")
         .bind(id)
@@ -412,7 +406,7 @@ pub async fn delete_game(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePosts, &state).await?;
 
     sqlx::query("DELETE FROM games WHERE id = $1")
         .bind(id)
@@ -440,7 +434,7 @@ pub async fn list_bank_receipts(
     auth: AuthUser,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePayments, &state).await?;
 
     let limit = params.limit();
     let cursor_id = params.cursor_id().unwrap_or(i64::MAX);
@@ -462,7 +456,7 @@ pub async fn approve_bank_receipt(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePayments, &state).await?;
 
     let receipt = sqlx::query_as::<_, BankReceiptRow>(
         "SELECT id, user_id, description, price, mode, approved, receipt_file, created_at FROM bank_receipts WHERE id = $1",
@@ -500,7 +494,7 @@ pub async fn reject_bank_receipt(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManagePayments, &state).await?;
 
     let result = sqlx::query("DELETE FROM bank_receipts WHERE id = $1 AND approved = FALSE")
         .bind(id)
@@ -528,7 +522,7 @@ pub async fn list_currencies(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     let rows = sqlx::query_as::<_, CurrencyRow>(
         "SELECT id, code, name, symbol, format, is_active FROM currencies ORDER BY code ASC",
@@ -556,7 +550,7 @@ pub async fn create_currency(
     auth: AuthUser,
     Json(req): Json<CurrencyRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     let row = sqlx::query_as::<_, CurrencyRow>(
         "INSERT INTO currencies (code, name, symbol, format) VALUES ($1, $2, $3, $4) RETURNING id, code, name, symbol, format, is_active",
@@ -576,7 +570,7 @@ pub async fn update_currency(
     Path(id): Path<i64>,
     Json(req): Json<CurrencyRequest>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     let result = sqlx::query(
         "UPDATE currencies SET code = $2, name = $3, symbol = $4, format = $5 WHERE id = $1",
@@ -599,7 +593,7 @@ pub async fn toggle_currency(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     sqlx::query("UPDATE currencies SET is_active = NOT is_active WHERE id = $1")
         .bind(id)
@@ -613,7 +607,7 @@ pub async fn delete_currency(
     auth: AuthUser,
     Path(id): Path<i64>,
 ) -> Result<Json<Value>, ApiError> {
-    require_admin(&auth)?;
+    auth.require_permission(Permission::ManageSettings, &state).await?;
 
     sqlx::query("DELETE FROM currencies WHERE id = $1")
         .bind(id)
