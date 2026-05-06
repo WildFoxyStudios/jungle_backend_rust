@@ -491,6 +491,75 @@ pub async fn liked_pages(
     Ok(Json(json!({ "data": pages })))
 }
 
+#[derive(Debug, Serialize, FromRow)]
+pub struct PageListRow {
+    pub id: i64,
+    pub name: String,
+    pub page_title: String,
+    pub avatar: String,
+    pub is_verified: bool,
+    pub like_count: i32,
+    pub category: Option<String>,
+}
+
+pub async fn list_pages(
+    State(state): State<AppState>,
+    Query(pagination): Query<PaginationParams>,
+) -> Result<Json<Value>, ApiError> {
+    let limit = pagination.limit();
+    let cursor_id = pagination.cursor_id();
+
+    let mut pages = if let Some(after_id) = cursor_id {
+        sqlx::query_as::<_, PageListRow>(
+            r#"
+            SELECT p.id, p.page_name AS name, p.page_title, p.avatar,
+                   p.is_verified, p.like_count,
+                   c.name_key AS category
+            FROM pages p
+            LEFT JOIN categories c ON c.id = p.category_id AND c.type = 'page'
+            WHERE p.active = TRUE AND p.id < $1
+            ORDER BY p.id DESC
+            LIMIT $2
+            "#,
+        )
+        .bind(after_id)
+        .bind(limit + 1)
+        .fetch_all(&state.db)
+        .await?
+    } else {
+        sqlx::query_as::<_, PageListRow>(
+            r#"
+            SELECT p.id, p.page_name AS name, p.page_title, p.avatar,
+                   p.is_verified, p.like_count,
+                   c.name_key AS category
+            FROM pages p
+            LEFT JOIN categories c ON c.id = p.category_id AND c.type = 'page'
+            WHERE p.active = TRUE
+            ORDER BY p.id DESC
+            LIMIT $1
+            "#,
+        )
+        .bind(limit + 1)
+        .fetch_all(&state.db)
+        .await?
+    };
+
+    let next_cursor = if pages.len() as i64 > limit {
+        pages.get((limit as usize).saturating_sub(1)).map(|p| p.id.to_string())
+    } else {
+        None
+    };
+    let has_more = pages.len() as i64 > limit;
+    if has_more {
+        pages.truncate(limit as usize);
+    }
+
+    Ok(Json(json!({
+        "data": pages,
+        "meta": { "cursor": next_cursor, "has_more": has_more }
+    })))
+}
+
 // ═══════════════════════════════════════════════════════════════════
 // Nearby pages (friends_nearby, nearby_business, nearby_shops)
 // ═══════════════════════════════════════════════════════════════════

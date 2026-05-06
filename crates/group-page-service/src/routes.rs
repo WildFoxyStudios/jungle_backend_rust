@@ -8,7 +8,10 @@ use shared::auth::AppState;
 pub fn create_router(state: AppState) -> Router {
     Router::new()
         // ── Pages ──
-        .route("/v1/pages", post(handlers::pages::create_page))
+        .route(
+            "/v1/pages",
+            get(handlers::pages::list_pages).post(handlers::pages::create_page),
+        )
         .route(
             "/v1/pages/categories",
             get(handlers::pages::list_categories),
